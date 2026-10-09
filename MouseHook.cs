@@ -11,12 +11,9 @@ namespace nyxWM
         private const int WM_MBUTTONUP = 0x0208;
         private const int WM_MOUSEMOVE = 0x0200;
 
-        // State variables
-        private bool isDragging = false;
-
         // Events for drag start and stop
-        public event Action OnDragStart;
-        public event Action OnDragStop;
+        public event Action OnDragStart = delegate {};
+        public event Action OnDragStop = delegate {};
 
         // Hook handle and procedure
         private IntPtr hHook = IntPtr.Zero;
@@ -35,24 +32,21 @@ namespace nyxWM
 
                 if (message == WM_MBUTTONDOWN)
                 {
-                    isDragging = true;
                     OnDragStart?.Invoke();
                     // Block the middle button down event to prevent system scroll
                     return (IntPtr)1;
                 }
                 else if (message == WM_MBUTTONUP)
                 {
-                    isDragging = false;
                     OnDragStop?.Invoke();
                     // Let the system handle the middle button up event
-                    return WinApi.CallNextHookEx(hHook, nCode, wParam, lParam);
+                    return hHook == IntPtr.Zero ? IntPtr.Zero : WinApi.CallNextHookEx(hHook, nCode, wParam, lParam);
                 }
                 // For WM_MOUSEMOVE and other messages, call the next hook without blocking
-                // (except we already handled WM_MOUSEMOVE implicitly by falling through)
             }
 
             // Call the next hook in the chain
-            return WinApi.CallNextHookEx(hHook, nCode, wParam, lParam);
+            return hHook == IntPtr.Zero ? IntPtr.Zero : WinApi.CallNextHookEx(hHook, nCode, wParam, lParam);
         }
 
         public void Start()
