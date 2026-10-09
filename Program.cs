@@ -13,7 +13,7 @@ namespace nyxWM
             var mouseHook = new MouseHook();
 
             // Set up timer for updating window positions
-            Timer renderTimer = new Timer { Interval = 10 }; // 10 ms = 100 Hz
+            System.Windows.Forms.Timer renderTimer = new System.Windows.Forms.Timer { Interval = 10 }; // 10 ms = 100 Hz
             renderTimer.Tick += (s, e) => windowManager.UpdatePosition();
 
             // Subscribe to mouse hook events
