@@ -34,6 +34,9 @@ namespace nyxWM
             public UIntPtr dwExtraInfo;
         }
 
+        // Constants
+        public const int WH_MOUSE_LL = 14;
+
         // Imported functions
         [DllImport("user32.dll")]
         public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
