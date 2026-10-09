@@ -12,20 +12,14 @@ namespace nyxWM
             var windowManager = new WindowManager();
             var mouseHook = new MouseHook();
 
-            // Set up timer for updating window positions
+            // Set up timer for updating window positions (runs constantly at 100 Hz)
             System.Windows.Forms.Timer renderTimer = new System.Windows.Forms.Timer { Interval = 10 }; // 10 ms = 100 Hz
             renderTimer.Tick += (s, e) => windowManager.UpdatePosition();
+            renderTimer.Start(); // Start timer immediately and keep it running
 
             // Subscribe to mouse hook events
-            mouseHook.OnDragStart += () =>
-            {
-                windowManager.StartDragging();
-                renderTimer.Start();
-            };
-            mouseHook.OnDragStop += () =>
-            {
-                renderTimer.Stop();
-            };
+            mouseHook.OnDragStart += () => windowManager.StartDragging();
+            mouseHook.OnDragStop += () => windowManager.StopDragging();
 
             // Start the mouse hook
             mouseHook.Start();

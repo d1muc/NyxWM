@@ -21,12 +21,13 @@ namespace nyxWM
         private int startMouseX;
         private int startMouseY;
 
-        // Accumulated delta since drag start (used for window movement)
-        private int accumulatedDx = 0;
-        private int accumulatedDy = 0;
+        // Lerp fields
+        private float currentDx = 0, currentDy = 0;   // current window offset
+        private float targetDx = 0, targetDy = 0;     // target offset from mouse movement
+        private bool isDragging = false;
 
         /// <summary>
-        /// Called when drag starts: records mouse position, resets accumulators, and caches initial window positions.
+        /// Called when drag starts: records mouse position, resets Lerp variables, and caches initial window positions.
         /// </summary>
         public void StartDragging()
         {
@@ -35,9 +36,11 @@ namespace nyxWM
             startMouseX = pt.X;
             startMouseY = pt.Y;
 
-            // Reset accumulated delta
-            accumulatedDx = 0;
-            accumulatedDy = 0;
+            // Reset Lerp variables
+            currentDx = 0;
+            currentDy = 0;
+            targetDx = 0;
+            targetDy = 0;
 
             // Clear previous cache
             initialWindowPositions.Clear();
@@ -78,30 +81,48 @@ namespace nyxWM
         }
 
         /// <summary>
-        /// Called on each timer tick while dragging: updates window positions based on accumulated mouse movement.
-        /// Implements warp cursor: after each step, returns cursor to start position to allow infinite dragging.
+        /// Called when drag stops: stops dragging but leaves Lerp to continue to settle.
+        /// </summary>
+        public void StopDragging()
+        {
+            isDragging = false;
+        }
+
+        /// <summary>
+        /// Called on each timer tick: updates window positions based on mouse movement with Lerp smoothing.
         /// </summary>
         public void UpdatePosition()
         {
-            // Get current cursor position
-            WinApi.GetCursorPos(out WinApi.POINT pt);
-            int currentX = pt.X;
-            int currentY = pt.Y;
+            // If dragging, update target based on mouse movement and warp cursor
+            if (isDragging)
+            {
+                WinApi.GetCursorPos(out WinApi.POINT pt);
+                int stepX = pt.X - startMouseX;
+                int stepY = pt.Y - startMouseY;
 
-            // Calculate step since last tick
-            int stepX = currentX - startMouseX;
-            int stepY = currentY - startMouseY;
+                // Invert accumulation so windows move opposite to mouse
+                targetDx -= stepX;
+                targetDy -= stepY;
 
-            // If no movement, do nothing
-            if (stepX == 0 && stepY == 0)
+                // Warp cursor back to start position to allow infinite dragging
+                WinApi.SetCursorPos(startMouseX, startMouseY);
+            }
+
+            // Apply Lerp smoothing: current chases target
+            currentDx += (targetDx - currentDx) * 0.15f;
+            currentDy += (targetDy - currentDy) * 0.15f;
+
+            // If not dragging and we've sufficiently reached the target, we can skip updates
+            if (!isDragging &&
+                Math.Abs(targetDx - currentDx) < 0.5f &&
+                Math.Abs(targetDy - currentDy) < 0.5f)
+            {
                 return;
+            }
 
-            // WARP: immediately return cursor to start position to prevent hitting screen edges
-            WinApi.SetCursorPos(startMouseX, startMouseY);
-
-            // Accumulate the step
-            accumulatedDx += stepX;
-            accumulatedDy += stepY;
+            // Convert to integer offset for window movement
+            int dx = (int)Math.Round(currentDx);
+            int dy = (int)Math.Round(currentDy);
 
             // Begin deferred window position session
             IntPtr hdwp = WinApi.BeginDeferWindowPos(initialWindowPositions.Count);
@@ -116,9 +137,8 @@ namespace nyxWM
                     IntPtr hWnd = kvp.Key;
                     WinApi.RECT rect = kvp.Value;
 
-                    // Apply inverted accumulated delta (windows move opposite to mouse)
-                    int newX = rect.Left - accumulatedDx;
-                    int newY = rect.Top - accumulatedDy;
+                    int newX = rect.Left + dx;   // using PLUS as per instruction (inversion achieved via negative target accumulation)
+                    int newY = rect.Top + dy;
 
                     // Defer the window position change
                     hdwp = WinApi.DeferWindowPos(hdwp, hWnd, IntPtr.Zero, newX, newY, 0, 0, SWP_FLAGS);
