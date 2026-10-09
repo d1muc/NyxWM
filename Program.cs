@@ -12,8 +12,20 @@ namespace nyxWM
             var windowManager = new WindowManager();
             var mouseHook = new MouseHook();
 
-            // Subscribe to mouse drag events
-            mouseHook.OnMouseDrag += (dx, dy) => windowManager.MoveAllWindows(dx, dy);
+            // Set up timer for updating window positions
+            Timer renderTimer = new Timer { Interval = 10 }; // 10 ms = 100 Hz
+            renderTimer.Tick += (s, e) => windowManager.UpdatePosition();
+
+            // Subscribe to mouse hook events
+            mouseHook.OnDragStart += () =>
+            {
+                windowManager.StartDragging();
+                renderTimer.Start();
+            };
+            mouseHook.OnDragStop += () =>
+            {
+                renderTimer.Stop();
+            };
 
             // Start the mouse hook
             mouseHook.Start();
@@ -21,7 +33,7 @@ namespace nyxWM
             // Handle Ctrl+C to stop the hook and exit
             Console.CancelKeyPress += (sender, e) =>
             {
-                e.Cancel = true; // Prevent the process from terminating immediately
+                e.Cancel = true; // Prevent immediate termination
                 mouseHook.Stop();
                 Application.Exit(); // Exit the message loop
             };

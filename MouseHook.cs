@@ -1,6 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
-using nyxWM; // To access WinApi
+using nyxWM;
 
 namespace nyxWM
 {
@@ -13,11 +13,10 @@ namespace nyxWM
 
         // State variables
         private bool isDragging = false;
-        private int startX = 0;
-        private int startY = 0;
 
-        // Event for dragging
-        public event Action<int, int> OnMouseDrag;
+        // Events for drag start and stop
+        public event Action OnDragStart;
+        public event Action OnDragStop;
 
         // Hook handle and procedure
         private IntPtr hHook = IntPtr.Zero;
@@ -32,37 +31,26 @@ namespace nyxWM
         {
             if (nCode >= 0)
             {
-                // Marshal the struct from lParam
-                WinApi.MSLLHOOKSTRUCT mouseStruct = (WinApi.MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(WinApi.MSLLHOOKSTRUCT));
-                int x = mouseStruct.pt.X;
-                int y = mouseStruct.pt.Y;
-
                 uint message = (uint)wParam.ToInt32();
 
                 if (message == WM_MBUTTONDOWN)
                 {
                     isDragging = true;
-                    startX = x;
-                    startY = y;
+                    OnDragStart?.Invoke();
                     // Block the middle button down event
-                    return (IntPtr)1;
-                }
-                else if (message == WM_MOUSEMOVE && isDragging)
-                {
-                    int dx = x - startX;
-                    int dy = y - startY;
-                    OnMouseDrag?.Invoke(dx, dy);
-                    // Update the last position
-                    startX = x;
-                    startY = y;
-                    // Block the mouse move event
                     return (IntPtr)1;
                 }
                 else if (message == WM_MBUTTONUP)
                 {
                     isDragging = false;
+                    OnDragStop?.Invoke();
                     // Let the system handle the middle button up event
                     return WinApi.CallNextHookEx(hHook, nCode, wParam, lParam);
+                }
+                else if (message == WM_MOUSEMOVE && isDragging)
+                {
+                    // Block mouse move events while dragging to prevent system cursor movement
+                    return (IntPtr)1;
                 }
             }
 
