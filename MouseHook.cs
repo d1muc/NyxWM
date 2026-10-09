@@ -37,7 +37,7 @@ namespace nyxWM
                 {
                     isDragging = true;
                     OnDragStart?.Invoke();
-                    // Block the middle button down event
+                    // Block the middle button down event to prevent system scroll
                     return (IntPtr)1;
                 }
                 else if (message == WM_MBUTTONUP)
@@ -47,11 +47,8 @@ namespace nyxWM
                     // Let the system handle the middle button up event
                     return WinApi.CallNextHookEx(hHook, nCode, wParam, lParam);
                 }
-                else if (message == WM_MOUSEMOVE && isDragging)
-                {
-                    // Block mouse move events while dragging to prevent system cursor movement
-                    return (IntPtr)1;
-                }
+                // For WM_MOUSEMOVE and other messages, call the next hook without blocking
+                // (except we already handled WM_MOUSEMOVE implicitly by falling through)
             }
 
             // Call the next hook in the chain
