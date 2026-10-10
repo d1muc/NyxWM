@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 using nyxWM;
+using System.Windows.Forms; // Added for Screen
 
 namespace nyxWM
 {
@@ -35,6 +36,7 @@ namespace nyxWM
             WinApi.GetCursorPos(out WinApi.POINT pt);
             startMouseX = pt.X;
             startMouseY = pt.Y;
+            isDragging = true;
 
             // Reset Lerp variables
             currentDx = 0;
@@ -78,6 +80,9 @@ namespace nyxWM
 
                 return true; // continue enumeration
             }, IntPtr.Zero);
+
+            // Set dragging flag to true
+            isDragging = true;
         }
 
         /// <summary>
@@ -86,6 +91,98 @@ namespace nyxWM
         public void StopDragging()
         {
             isDragging = false;
+        }
+
+        /// <summary>
+        /// Resets the camera to center the group of visible windows on the primary monitor.
+        /// </summary>
+        public void ResetCamera()
+        {
+            // Dictionary to hold current window positions
+            Dictionary<IntPtr, WinApi.RECT> currentPositions = new Dictionary<IntPtr, WinApi.RECT>();
+
+            // Enumerate all top-level windows to get current positions
+            WinApi.EnumWindows((hWnd, lParam) =>
+            {
+                // Skip invisible windows
+                if (!WinApi.IsWindowVisible(hWnd))
+                    return true;
+
+                // Skip minimized windows
+                if (WinApi.IsIconic(hWnd))
+                    return true;
+
+                // Skip windows with empty title
+                int titleLen = WinApi.GetWindowTextLength(hWnd);
+                if (titleLen == 0)
+                    return true;
+
+                // Get window class name to filter out system UI
+                var classNameBuilder = new StringBuilder(256);
+                WinApi.GetClassName(hWnd, classNameBuilder, classNameBuilder.Capacity);
+                string className = classNameBuilder.ToString();
+
+                // Skip taskbar and desktop windows
+                if (className == "Shell_TrayWnd" || // Taskbar
+                    className == "Progman" ||       // Desktop background
+                    className == "WorkerW")         // Desktop worker
+                {
+                    return true;
+                }
+
+                // Get window rectangle
+                if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
+                {
+                    // Skip windows with invalid coordinates (far off-screen)
+                    if (rect.Left < -10000 || rect.Top < -10000)
+                        return true;
+
+                    // Store current position
+                    currentPositions[hWnd] = rect;
+                }
+
+                return true; // continue enumeration
+            }, IntPtr.Zero);
+
+            // If no valid windows, do nothing
+            if (currentPositions.Count == 0)
+                return;
+
+            // Compute bounding box from current positions
+            int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
+            foreach (var rect in currentPositions.Values)
+            {
+                if (rect.Left < minX) minX = rect.Left;
+                if (rect.Top < minY) minY = rect.Top;
+                if (rect.Right > maxX) maxX = rect.Right;
+                if (rect.Bottom > maxY) maxY = rect.Bottom;
+            }
+
+            // Compute center of the bounding box
+            int centerX = (minX + maxX) / 2;
+            int centerY = (minY + maxY) / 2;
+
+            // Get the center of the primary monitor
+            Rectangle primaryScreenBounds = Screen.PrimaryScreen.Bounds;
+            int screenCenterX = primaryScreenBounds.X + primaryScreenBounds.Width / 2;
+            int screenCenterY = primaryScreenBounds.Y + primaryScreenBounds.Height / 2;
+
+            // Compute delta needed to move the windows' center to the screen center
+            int deltaX = screenCenterX - centerX;
+            int deltaY = screenCenterY - centerY;
+
+            // IMPORTANT: Update initialWindowPositions with current positions
+            initialWindowPositions.Clear();
+            foreach (var kvp in currentPositions)
+            {
+                initialWindowPositions[kvp.Key] = kvp.Value;
+            }
+
+            // Reset current offsets and set target to move to center
+            currentDx = 0;
+            currentDy = 0;
+            targetDx = deltaX;
+            targetDy = deltaY;
         }
 
         /// <summary>
@@ -100,9 +197,9 @@ namespace nyxWM
                 int stepX = pt.X - startMouseX;
                 int stepY = pt.Y - startMouseY;
 
-                // Invert accumulation so windows move opposite to mouse
-                targetDx -= stepX;
-                targetDy -= stepY;
+                // Normal movement: windows follow mouse
+                targetDx += stepX;
+                targetDy += stepY;
 
                 // Warp cursor back to start position to allow infinite dragging
                 WinApi.SetCursorPos(startMouseX, startMouseY);
