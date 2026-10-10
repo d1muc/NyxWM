@@ -5,6 +5,7 @@ using System.Text;
 using nyxWM;
 using System.Windows.Forms; // Added for Screen
 using System.Threading; // Added for SynchronizationContext
+using System.Diagnostics; // Added for Stopwatch
 
 namespace nyxWM
 {
@@ -27,6 +28,17 @@ namespace nyxWM
         private float currentDx = 0, currentDy = 0;   // current window offset
         private float targetDx = 0, targetDy = 0;     // target offset from mouse movement
         private bool isDragging = false;
+
+        // Frame timing
+        private long _lastUpdateTicks = 0;
+        private readonly Stopwatch _stopwatch = new Stopwatch();
+
+        // Monitor refresh rate
+        private int _monitorRefreshRate = 165; // Default fallback
+        private float _targetDeltaTime => 1000f / _monitorRefreshRate; // Target time per frame in ms
+
+        // Lerp tuning - how quickly we catch up to target (per second)
+        private const float LerpRatePerSecond = 8.0f;
 
         // Auto-center on focus flag
         public bool AutoCenterOnFocus { get; set; } = true;
@@ -57,6 +69,14 @@ namespace nyxWM
             }
             // Capture the synchronization context from the UI thread
             _syncContext = SynchronizationContext.Current;
+
+            // Get monitor refresh rate with fallback
+            _monitorRefreshRate = MonitorUtils.GetPrimaryMonitorRefreshRate(165);
+            Console.WriteLine($"Detected monitor refresh rate: {_monitorRefreshRate} Hz");
+
+            // Initialize stopwatch for frame timing
+            _stopwatch.Start();
+            _lastUpdateTicks = _stopwatch.ElapsedTicks;
 
             // Set up the WinEvent delegate
             _winEventProcDelegate = new WinApi.WinEventProc(WinEventProcCallback);
@@ -374,7 +394,8 @@ namespace nyxWM
         /// <summary>
         /// Called on each timer tick: updates window positions based on mouse movement with Lerp smoothing.
         /// </summary>
-        public void UpdatePosition()
+        /// <param name="deltaTime">Time elapsed since last update in milliseconds</param>
+        public void UpdatePosition(float deltaTime)
         {
             // If dragging, update target based on mouse movement and warp cursor
             if (isDragging)
@@ -391,9 +412,11 @@ namespace nyxWM
                 WinApi.SetCursorPos(startMouseX, startMouseY);
             }
 
-            // Apply Lerp smoothing: current chases target
-            currentDx += (targetDx - currentDx) * 0.15f;
-            currentDy += (targetDy - currentDy) * 0.15f;
+            // Apply frame-rate independent Lerp smoothing: current chases target
+            // Convert LerpRatePerSecond to a per-millisecond rate, then calculate factor for this deltaTime
+            float lerpFactor = 1.0f - MathF.Exp(-LerpRatePerSecond * deltaTime / 1000.0f);
+            currentDx += (targetDx - currentDx) * lerpFactor;
+            currentDy += (targetDy - currentDy) * lerpFactor;
 
             // If not dragging and we've sufficiently reached the target, we can skip updates
             if (!isDragging &&

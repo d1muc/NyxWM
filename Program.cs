@@ -1,6 +1,8 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using System.Diagnostics;
+using nyxWM;
 
 namespace nyxWM
 {
@@ -26,9 +28,22 @@ namespace nyxWM
             var windowManager = new WindowManager();
             var mouseHook = new MouseHook();
 
-            // Set up timer for updating window positions (runs constantly at 100 Hz)
-            System.Windows.Forms.Timer renderTimer = new System.Windows.Forms.Timer { Interval = 10 }; // 10 ms = 100 Hz
-            renderTimer.Tick += (s, e) => windowManager.UpdatePosition();
+            // Get monitor refresh rate for timer setup
+            int refreshRate = MonitorUtils.GetPrimaryMonitorRefreshRate(165);
+            int intervalMs = Math.Max(1, (int)(1000.0 / refreshRate)); // Calculate interval for target refresh rate
+
+            Console.WriteLine($"Setting up render timer for {refreshRate} Hz ({intervalMs} ms interval)");
+
+            // Set up high-resolution timer for updating window positions
+            long lastTimestamp = Stopwatch.GetTimestamp();
+            var renderTimer = new HighResolutionTimer(() =>
+            {
+                // Calculate delta time
+                long currentTimestamp = Stopwatch.GetTimestamp();
+                float deltaTime = (float)(currentTimestamp - lastTimestamp) * 1000f / Stopwatch.Frequency;
+                lastTimestamp = currentTimestamp;
+                windowManager.UpdatePosition(deltaTime);
+            }, intervalMs);
             renderTimer.Start(); // Start timer immediately and keep it running
 
             // Subscribe to mouse hook events
@@ -51,6 +66,7 @@ namespace nyxWM
                 mouseHook.Stop();
                 UnregisterHotKey(IntPtr.Zero, 0x0000); // Unregister reset camera hotkey
                 UnregisterHotKey(IntPtr.Zero, 0x0001); // Unregister toggle auto-center hotkey
+                renderTimer.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
 
