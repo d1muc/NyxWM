@@ -9,11 +9,13 @@ namespace nyxWM
         // Constants for mouse messages
         private const int WM_MBUTTONDOWN = 0x0207;
         private const int WM_MBUTTONUP = 0x0208;
-        private const int WM_MOUSEMOVE = 0x0200;
+        private const int WM_MOUSEWHEEL = 0x020A;
 
         // Events for drag start and stop
         public event Action OnDragStart = delegate {};
         public event Action OnDragStop = delegate {};
+        // Event for zoom (Alt + mouse wheel)
+        public event Action<int> OnZoom = delegate {};
 
         // Hook handle and procedure
         private IntPtr hHook = IntPtr.Zero;
@@ -40,6 +42,19 @@ namespace nyxWM
                 {
                     OnDragStop?.Invoke();
                     // Let the system handle the middle button up event
+                    return hHook == IntPtr.Zero ? IntPtr.Zero : WinApi.CallNextHookEx(hHook, nCode, wParam, lParam);
+                }
+                else if (message == WM_MOUSEWHEEL)
+                {
+                    bool altDown = (WinApi.GetAsyncKeyState(WinApi.VK_MENU) & 0x8000) != 0;
+                    short wheelDelta = (short)WinApi.HIWORD(wParam.ToInt32());
+                    if (altDown)
+                    {
+                        OnZoom?.Invoke(wheelDelta);
+                        // Block the wheel event to prevent system scroll when Alt is held
+                        return (IntPtr)1;
+                    }
+                    // Let the system handle the wheel event when Alt not held
                     return hHook == IntPtr.Zero ? IntPtr.Zero : WinApi.CallNextHookEx(hHook, nCode, wParam, lParam);
                 }
                 // For WM_MOUSEMOVE and other messages, call the next hook without blocking

@@ -37,6 +37,7 @@ namespace nyxWM
 
         // Constants
         public const int WH_MOUSE_LL = 14;
+        public const int WH_KEYBOARD_LL = 13; // Low-level keyboard hook
         public const int GWL_EXSTYLE = -20;
         public const int WS_EX_TOOLWINDOW = 0x00000080;
         public const int WS_EX_APPWINDOW = 0x00040000;
@@ -65,6 +66,9 @@ namespace nyxWM
 
         [DllImport("user32.dll")]
         public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
 
         [DllImport("user32.dll")]
         public static extern bool UnhookWindowsHookEx(IntPtr hhk);
@@ -108,8 +112,24 @@ namespace nyxWM
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
 
+        // Added for mouse wheel handling
+        [DllImport("user32.dll")]
+        public static extern short GetAsyncKeyState(int vKey);
+        public const int VK_MENU = 0x12; // Alt key
+        public const int VK_LWIN = 0x5B; // Left Windows key
+        public const int VK_RWIN = 0x5C; // Right Windows key
+
+        // Added for foreground window
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
+        // Helper macros for mouse wheel
+        public static int HIWORD(int value) => (value >> 16) & 0xFFFF;
+        public static int LOWORD(int value) => value & 0xFFFF;
+
         // Delegates for callback functions
         public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
         public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+        public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
     }
 }
