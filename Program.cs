@@ -9,6 +9,7 @@ namespace nyxWM
         // Hotkey constants
         private const int MOD_CONTROL = 0x0002;
         private const int VK_R = 0x52;
+        private const int VK_T = 0x54;
         internal const int WM_HOTKEY = 0x0312;
 
         // Hotkey functions
@@ -36,6 +37,8 @@ namespace nyxWM
 
             // Register Ctrl+R hotkey for resetting camera
             RegisterHotKey(IntPtr.Zero, 0x0000, MOD_CONTROL, VK_R);
+            // Register Ctrl+T hotkey for toggling auto-center-on-focus
+            RegisterHotKey(IntPtr.Zero, 0x0001, MOD_CONTROL, VK_T);
             Application.AddMessageFilter(new HotkeyMessageFilter(windowManager));
 
             // Start the mouse hook
@@ -46,7 +49,8 @@ namespace nyxWM
             {
                 e.Cancel = true; // Prevent immediate termination
                 mouseHook.Stop();
-                UnregisterHotKey(IntPtr.Zero, 0x0000); // Unregister hotkey
+                UnregisterHotKey(IntPtr.Zero, 0x0000); // Unregister reset camera hotkey
+                UnregisterHotKey(IntPtr.Zero, 0x0001); // Unregister toggle auto-center hotkey
                 Application.Exit(); // Exit the message loop
             };
 
@@ -69,10 +73,19 @@ namespace nyxWM
 
         public bool PreFilterMessage(ref Message m)
         {
-            if (m.Msg == Program.WM_HOTKEY && m.WParam.ToInt32() == 0x0000) // Our hotkey ID
+            if (m.Msg == Program.WM_HOTKEY)
             {
-                _windowManager.ResetCamera();
-                return true; // Message handled
+                int wParam = m.WParam.ToInt32();
+                if (wParam == 0x0000) // Ctrl+R: Reset camera
+                {
+                    _windowManager.ResetCamera();
+                    return true; // Message handled
+                }
+                else if (wParam == 0x0001) // Ctrl+T: Toggle auto-center-on-focus
+                {
+                    _windowManager.ToggleAutoCenter();
+                    return true; // Message handled
+                }
             }
             return false; // Message not handled
         }

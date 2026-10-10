@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using nyxWM;
 
@@ -54,7 +55,12 @@ namespace nyxWM
             if (hHook == IntPtr.Zero)
             {
                 // Get the handle of the current module
-                IntPtr hModule = WinApi.GetModuleHandle(System.Diagnostics.Process.GetCurrentProcess().MainModule.ModuleName);
+                Process currentProcess = System.Diagnostics.Process.GetCurrentProcess();
+                if (currentProcess.MainModule == null)
+                {
+                    throw new InvalidOperationException("Cannot determine main module name.");
+                }
+                IntPtr hModule = WinApi.GetModuleHandle(currentProcess.MainModule.ModuleName);
                 hHook = WinApi.SetWindowsHookEx(WinApi.WH_MOUSE_LL, _hookProc, hModule, 0);
                 if (hHook == IntPtr.Zero)
                 {

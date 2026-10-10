@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using nyxWM;
 using System.Windows.Forms; // Added for Screen
+using System.Threading; // Added for SynchronizationContext
 
 namespace nyxWM
 {
@@ -26,6 +27,191 @@ namespace nyxWM
         private float currentDx = 0, currentDy = 0;   // current window offset
         private float targetDx = 0, targetDy = 0;     // target offset from mouse movement
         private bool isDragging = false;
+
+        // Auto-center on focus flag
+        public bool AutoCenterOnFocus { get; set; } = true;
+
+        /// <summary>
+        /// Toggles the auto-center-on-focus feature.
+        /// </summary>
+        public void ToggleAutoCenter()
+        {
+            AutoCenterOnFocus = !AutoCenterOnFocus;
+            Console.WriteLine($"AutoCenterOnFocus is now: {AutoCenterOnFocus}");
+        }
+
+        // WinEvent hook fields
+        private WinApi.WinEventProc _winEventProcDelegate;
+        private IntPtr _winEventHookHandle;
+        private SynchronizationContext? _syncContext;
+
+        /// <summary>
+        /// Constructor: sets up the WinEvent hook for foreground window changes.
+        /// </summary>
+        public WindowManager()
+        {
+            // Ensure a synchronization context exists for the current thread
+            if (SynchronizationContext.Current == null)
+            {
+                SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+            }
+            // Capture the synchronization context from the UI thread
+            _syncContext = SynchronizationContext.Current;
+
+            // Set up the WinEvent delegate
+            _winEventProcDelegate = new WinApi.WinEventProc(WinEventProcCallback);
+
+            // Install the hook for EVENT_SYSTEM_FOREGROUND
+            _winEventHookHandle = WinApi.SetWinEventHook(
+                WinApi.EVENT_SYSTEM_FOREGROUND,
+                WinApi.EVENT_SYSTEM_FOREGROUND,
+                IntPtr.Zero,
+                _winEventProcDelegate,
+                0,
+                0,
+                WinApi.WINEVENT_OUTOFCONTEXT | WinApi.WINEVENT_SKIPOWNPROCESS);
+        }
+
+        /// <summary>
+        /// Destructor: unhooks the WinEvent hook.
+        /// </summary>
+        ~WindowManager()
+        {
+            if (_winEventHookHandle != IntPtr.Zero)
+            {
+                WinApi.UnhookWinEvent(_winEventHookHandle);
+                _winEventHookHandle = IntPtr.Zero;
+            }
+        }
+
+        /// <summary>
+        /// Callback for WinEvent hook. Marshals to the UI thread.
+        /// </summary>
+        private void WinEventProcCallback(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
+        {
+            // Debug output
+            Console.WriteLine($"WinEventProcCallback: hwnd={hwnd.ToInt64():X} eventType={eventType}");
+
+            // Marshal to the UI thread
+            if (_syncContext != null)
+            {
+                _syncContext.Post(state => HandleFocusChange(hwnd), null);
+            }
+        }
+
+        /// <summary>
+        /// Handles the foreground window change event on the UI thread.
+        /// </summary>
+        /// <param name="hwnd">The handle of the window that gained focus.</param>
+        private void HandleFocusChange(IntPtr hwnd)
+        {
+            // Debug output
+            int debugTitleLen = WinApi.GetWindowTextLength(hwnd);
+            if (debugTitleLen > 0)
+            {
+                var titleSb = new System.Text.StringBuilder(debugTitleLen + 1);
+                WinApi.GetWindowText(hwnd, titleSb, titleSb.Capacity);
+                Console.WriteLine($"HandleFocusChange: hwnd={hwnd.ToInt64():X} title=\"{titleSb}\"");
+            }
+            else
+            {
+                Console.WriteLine($"HandleFocusChange: hwnd={hwnd.ToInt64():X} (no title)");
+            }
+
+            // If auto-center is disabled or we are currently dragging, do nothing.
+            if (!AutoCenterOnFocus || isDragging)
+                return;
+
+            // Check window validity: visible, not minimized, has a title, and not a system window.
+            if (!WinApi.IsWindowVisible(hwnd))
+                return;
+
+            if (WinApi.IsIconic(hwnd))
+                return;
+
+            int titleLen = WinApi.GetWindowTextLength(hwnd);
+            if (titleLen == 0)
+                return;
+
+            var classNameBuilder = new System.Text.StringBuilder(256);
+            WinApi.GetClassName(hwnd, classNameBuilder, classNameBuilder.Capacity);
+            string className = classNameBuilder.ToString();
+
+            // Skip taskbar and desktop windows
+            if (className == "Shell_TrayWnd" || // Taskbar
+                className == "Progman" ||       // Desktop background
+                className == "WorkerW")         // Desktop worker
+            {
+                return;
+            }
+
+            // Update initialWindowPositions with current positions of all visible windows.
+            initialWindowPositions.Clear();
+            WinApi.EnumWindows((hWnd, lParam) =>
+            {
+                // Skip invisible windows
+                if (!WinApi.IsWindowVisible(hWnd))
+                    return true;
+
+                // Skip minimized windows
+                if (WinApi.IsIconic(hWnd))
+                    return true;
+
+                // Skip windows with empty title
+                int winTitleLen = WinApi.GetWindowTextLength(hWnd);
+                if (winTitleLen == 0)
+                    return true;
+
+                // Get window class name to filter out system UI
+                var winClassNameBuilder = new System.Text.StringBuilder(256);
+                WinApi.GetClassName(hWnd, winClassNameBuilder, winClassNameBuilder.Capacity);
+                string winClassName = winClassNameBuilder.ToString();
+
+                // Skip taskbar and desktop windows
+                if (winClassName == "Shell_TrayWnd" || // Taskbar
+                    winClassName == "Progman" ||       // Desktop background
+                    winClassName == "WorkerW")         // Desktop worker
+                {
+                    return true;
+                }
+
+                // Get window rectangle
+                if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
+                {
+                    // Skip windows with invalid coordinates (far off-screen)
+                    if (rect.Left < -10000 || rect.Top < -10000)
+                        return true;
+
+                    // Store current position
+                    initialWindowPositions[hWnd] = rect;
+                }
+
+                return true; // continue enumeration
+            }, IntPtr.Zero);
+
+            // Get the rectangle of the focused window
+            if (!WinApi.GetWindowRect(hwnd, out WinApi.RECT rect))
+                return;
+
+            // Calculate the center of the focused window
+            int winCenterX = (rect.Left + rect.Right) / 2;
+            int winCenterY = (rect.Top + rect.Bottom) / 2;
+
+            // Get the center of the primary screen
+            Rectangle primaryScreenBounds = Screen.PrimaryScreen!.Bounds;
+            int screenCenterX = primaryScreenBounds.X + primaryScreenBounds.Width / 2;
+            int screenCenterY = primaryScreenBounds.Y + primaryScreenBounds.Height / 2;
+
+            // Calculate delta to center the window on the screen
+            int deltaX = screenCenterX - winCenterX;
+            int deltaY = screenCenterY - winCenterY;
+
+            // Reset current offsets and set target to move to center
+            currentDx = 0;
+            currentDy = 0;
+            targetDx = deltaX;
+            targetDy = deltaY;
+        }
 
         /// <summary>
         /// Called when drag starts: records mouse position, resets Lerp variables, and caches initial window positions.
@@ -163,7 +349,7 @@ namespace nyxWM
             int centerY = (minY + maxY) / 2;
 
             // Get the center of the primary monitor
-            Rectangle primaryScreenBounds = Screen.PrimaryScreen.Bounds;
+            Rectangle primaryScreenBounds = Screen.PrimaryScreen!.Bounds;
             int screenCenterX = primaryScreenBounds.X + primaryScreenBounds.Width / 2;
             int screenCenterY = primaryScreenBounds.Y + primaryScreenBounds.Height / 2;
 
