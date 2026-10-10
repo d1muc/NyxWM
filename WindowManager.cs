@@ -13,7 +13,7 @@ namespace nyxWM
         private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOZORDER = 0x0004;
         private const uint SWP_NOACTIVATE = 0x0010;
-        private const uint SWP_FLAGS = SWP_NOZORDER | SWP_NOACTIVATE; // exclude SWP_NOSIZE because we change size
+        private const uint SWP_FLAGS = SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE;
 
         // Cached initial positions of windows when dragging starts
         private readonly Dictionary<IntPtr, WinApi.RECT> initialWindowPositions = new();
@@ -26,28 +26,6 @@ namespace nyxWM
         private float currentDx = 0, currentDy = 0;   // current window offset
         private float targetDx = 0, targetDy = 0;     // target offset from mouse movement
         private bool isDragging = false;
-
-        // Zoom fields
-        private float currentZoomLevel = 1.0f;
-        private float targetZoomLevel = 1.0f;
-        private const float ZOOM_LERP = 0.15f;
-        private const float ZOOM_MIN = 0.5f;
-        private const float ZOOM_MAX = 2.0f;
-
-        // Keyboard hook for Alt+Tab and Win+Tab
-        private readonly KeyboardHook _keyboardHook;
-
-        public WindowManager()
-        {
-            _keyboardHook = new KeyboardHook();
-            _keyboardHook.OnWindowSwitchTriggered += OnWindowSwitchTriggered;
-            _keyboardHook.Start();
-        }
-
-        private void OnWindowSwitchTriggered()
-        {
-            CenterOnActiveWindow();
-        }
 
         /// <summary>
         /// Called when drag starts: records mouse position, resets Lerp variables, and caches initial window positions.
@@ -205,42 +183,6 @@ namespace nyxWM
             currentDy = 0;
             targetDx = deltaX;
             targetDy = deltaY;
-
-            // Reset zoom
-            currentZoomLevel = 1.0f;
-            targetZoomLevel = 1.0f;
-        }
-
-        /// <summary>
-        /// Centers the camera on the currently active window (triggered by Alt+Tab or Win+Tab).
-        /// </summary>
-        public void CenterOnActiveWindow()
-        {
-            IntPtr foreground = WinApi.GetForegroundWindow();
-            if (foreground == IntPtr.Zero) return;
-
-            // Get the rectangle of the foreground window
-            if (!WinApi.GetWindowRect(foreground, out WinApi.RECT rect)) return;
-
-            // Compute center of the window
-            int windowCenterX = (rect.Left + rect.Right) / 2;
-            int windowCenterY = (rect.Top + rect.Bottom) / 2;
-
-            // Get the center of the primary monitor
-            Rectangle screenBounds = Screen.PrimaryScreen.Bounds;
-            int screenCenterX = screenBounds.X + screenBounds.Width / 2;
-            int screenCenterY = screenBounds.Y + screenBounds.Height / 2;
-
-            // Compute delta to move the window center to screen center
-            int deltaX = screenCenterX - windowCenterX;
-            int deltaY = screenCenterY - windowCenterY;
-
-            // Set target offset to this delta (so that when we apply the offset, the window moves to center)
-            targetDx = deltaX;
-            targetDy = deltaY;
-
-            // Note: We do not reset currentDx/currentDy here; the Lerp will smoothly move from current to target.
-            // Zoom remains unchanged.
         }
 
         /// <summary>
