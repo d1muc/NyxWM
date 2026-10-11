@@ -169,7 +169,8 @@ namespace nyxWM
                 return;
             }
 
-            // Update initialWindowPositions with current positions of all visible windows.
+            // Update initialWindowPositions with base positions of all visible windows.
+            // Base position = current position - target offset
             initialWindowPositions.Clear();
             WinApi.EnumWindows((hWnd, lParam) =>
             {
@@ -204,8 +205,14 @@ namespace nyxWM
                     if (rect.Left < -10000 || rect.Top < -10000)
                         return true;
 
-                    // Store current position
-                    initialWindowPositions[hWnd] = rect;
+                    // Store base position (current position minus target offset)
+                    initialWindowPositions[hWnd] = new WinApi.RECT
+                    {
+                        Left = rect.Left - (int)Math.Round(targetDx),
+                        Top = rect.Top - (int)Math.Round(targetDy),
+                        Right = rect.Right - (int)Math.Round(targetDx),
+                        Bottom = rect.Bottom - (int)Math.Round(targetDy)
+                    };
                 }
 
                 return true; // continue enumeration
@@ -296,7 +303,14 @@ namespace nyxWM
                 // Get window rectangle
                 if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
                 {
-                    initialWindowPositions[hWnd] = rect;
+                    // Store base position (current position minus target offset)
+                    initialWindowPositions[hWnd] = new WinApi.RECT
+                    {
+                        Left = rect.Left - (int)Math.Round(targetDx),
+                        Top = rect.Top - (int)Math.Round(targetDy),
+                        Right = rect.Right - (int)Math.Round(targetDx),
+                        Bottom = rect.Bottom - (int)Math.Round(targetDy)
+                    };
                 }
 
                 return true; // continue enumeration
