@@ -59,7 +59,7 @@ namespace nyxWM
 
         /// <summary>
         /// Constructor: sets up the WinEvent hook for foreground window changes.
-        /// </>
+        /// </summary>
         public WindowManager()
         {
             // Ensure a synchronization context exists for the current thread
@@ -329,46 +329,92 @@ namespace nyxWM
         }
 
         /// <summary>
-        /// Resets the camera to center the group of visible windows on the primary monitor.
+        /// Resets the camera to center the group of visible windows.
+        /// Takes all open windows, conceptual rectangle covering them,
+        /// finds its center, and moves camera to that center.
+        /// Does not modify initialWindowPositions (base positions remain intact).
         /// </summary>
         public void ResetCamera()
         {
-            // If we don't have initial window positions, we can't reset properly
-            if (initialWindowPositions.Count == 0)
+            // Step 1: Take all open windows
+            List<WinApi.RECT> windowRects = new List<WinApi.RECT>();
+
+            // Enumerate all top-level windows to get current positions
+            WinApi.EnumWindows((hWnd, lParam) =>
+            {
+                // Skip invisible windows
+                if (!WinApi.IsWindowVisible(hWnd))
+                    return true;
+
+                // Skip minimized windows
+                if (WinApi.IsIconic(hWnd))
+                    return true;
+
+                // Skip windows with empty title
+                int titleLen = WinApi.GetWindowTextLength(hWnd);
+                if (titleLen == 0)
+                    return true;
+
+                // Get window class name to filter out system UI
+                var classNameBuilder = new StringBuilder(256);
+                WinApi.GetClassName(hWnd, classNameBuilder, classNameBuilder.Capacity);
+                string className = classNameBuilder.ToString();
+
+                // Skip ignored windows
+                if (IsIgnoredWindow(className))
+                {
+                    return true;
+                }
+
+                // Get window rectangle
+                if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
+                {
+                    // Skip windows with invalid coordinates (far off-screen)
+                    if (rect.Left < -10000 || rect.Top < -10000)
+                        return true;
+
+                    // Store window rectangle
+                    windowRects.Add(rect);
+                }
+
+                return true; // continue enumeration
+            }, IntPtr.Zero);
+
+            // If no valid windows, do nothing
+            if (windowRects.Count == 0)
                 return;
 
-            // Calculate bounding box based on current actual positions of windows
-            // Current position = base position + target offset
+            // Step 2: Conceptually draw a rectangle that covers all these windows
+            // Step 3: Find the center of this rectangle
             int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
-            foreach (var kvp in initialWindowPositions)
+            foreach (var rect in windowRects)
             {
-                WinApi.RECT baseRect = kvp.Value;
-                int currentLeft = baseRect.Left + (int)Math.Round(targetDx);
-                int currentTop = baseRect.Top + (int)Math.Round(targetDy);
-                int currentRight = baseRect.Right + (int)Math.Round(targetDx);
-                int currentBottom = baseRect.Bottom + (int)Math.Round(targetDy);
-
-                if (currentLeft < minX) minX = currentLeft;
-                if (currentTop < minY) minY = currentTop;
-                if (currentRight > maxX) maxX = currentRight;
-                if (currentBottom > maxY) maxY = currentBottom;
+                if (rect.Left < minX) minX = rect.Left;
+                if (rect.Top < minY) minY = rect.Top;
+                if (rect.Right > maxX) maxX = rect.Right;
+                if (rect.Bottom > maxY) maxY = rect.Bottom;
             }
 
-            int groupCenterX = (minX + maxX) / 2;
-            int groupCenterY = (minY + maxY) / 2;
+            int centerX = (minX + maxX) / 2;
+            int centerY = (minY + maxY) / 2;
 
+            // Step 4: Move the camera to this center (independently of where it currently is)
+            // Get the center of the primary monitor
             Rectangle primaryScreenBounds = Screen.PrimaryScreen!.Bounds;
             int screenCenterX = primaryScreenBounds.X + primaryScreenBounds.Width / 2;
             int screenCenterY = primaryScreenBounds.Y + primaryScreenBounds.Height / 2;
 
-            // Calculate delta needed to center the group on screen
-            int deltaX = screenCenterX - groupCenterX;
-            int deltaY = screenCenterY - groupCenterY;
+            // Calculate the delta needed to center the windows on the screen
+            int deltaX = screenCenterX - centerX;
+            int deltaY = screenCenterY - centerY;
 
-            // Set target offset to center the group (don't accumulate, just set)
-            // This prevents double-offset bug
-            targetDx = deltaX;
-            targetDy = deltaY;
+            // Apply the delta to target offset (accumulate, don't replace)
+            // Reset current offset to restart animation from current position
+            // DO NOT modify initialWindowPositions - keep base positions intact
+            targetDx += deltaX;
+            targetDy += deltaY;
+            currentDx = 0;
+            currentDy = 0;
         }
 
         /// <summary>
