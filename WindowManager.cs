@@ -333,11 +333,6 @@ namespace nyxWM
                 if (WinApi.IsIconic(hWnd))
                     return true;
 
-                // Skip windows with empty title
-                int titleLen = WinApi.GetWindowTextLength(hWnd);
-                if (titleLen == 0)
-                    return true;
-
                 // Get window class name to filter out system UI
                 var classNameBuilder = new StringBuilder(256);
                 WinApi.GetClassName(hWnd, classNameBuilder, classNameBuilder.Capacity);
@@ -352,10 +347,6 @@ namespace nyxWM
                 // Get window rectangle
                 if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
                 {
-                    // Skip windows with invalid coordinates (far off-screen)
-                    if (rect.Left < -10000 || rect.Top < -10000)
-                        return true;
-
                     // Store current position
                     currentPositions[hWnd] = rect;
                 }

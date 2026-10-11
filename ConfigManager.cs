@@ -11,7 +11,7 @@ namespace nyxWM
     public static class ConfigManager
     {
         private static readonly string ConfigFilePath = Path.Combine(
-            AppDomain.CurrentDomain.BaseDirectory, "config", "config.json");
+            AppDomain.CurrentDomain.BaseDirectory, "config", "config.jsonc");
 
         private static ConfigSettings? _settings;
         private static readonly object _lock = new();
@@ -39,7 +39,7 @@ namespace nyxWM
         }
 
         /// <summary>
-        /// Loads configuration from config.json.
+        /// Loads configuration from config.jsonc.
         /// If the file is missing, invalid, or missing required fields, returns default settings.
         /// </summary>
         /// <returns>The loaded configuration settings.</returns>
@@ -53,11 +53,14 @@ namespace nyxWM
                     return CreateDefaultSettings();
                 }
 
-                string json = File.ReadAllText(ConfigFilePath);
-                // Remove comments (both single-line and multi-line) to make it valid JSON.
-                json = StripComments(json);
+                var options = new JsonSerializerOptions
+                {
+                    ReadCommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true
+                };
 
-                var settings = JsonSerializer.Deserialize<ConfigSettings>(json);
+                string json = File.ReadAllText(ConfigFilePath);
+                var settings = JsonSerializer.Deserialize<ConfigSettings>(json, options);
                 if (settings == null)
                 {
                     Console.WriteLine($"Failed to deserialize configuration from {ConfigFilePath}. Using default settings.");
@@ -75,18 +78,6 @@ namespace nyxWM
             }
         }
 
-        /// <summary>
-        /// Strips comments from a JSON string.
-        /// Handles // single-line comments and /* ... */ multi-line comments.
-        /// </summary>
-        private static string StripComments(string json)
-        {
-            // Remove /* ... */ comments (non-greedy)
-            json = Regex.Replace(json, @"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/", "", RegexOptions.Singleline);
-            // Remove // comments (until end of line)
-            json = Regex.Replace(json, @"(?<!:)//.*", "");
-            return json;
-        }
 
         /// <summary>
         /// Creates default configuration settings.
