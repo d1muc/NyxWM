@@ -319,87 +319,70 @@ namespace nyxWM
         /// </summary>
         public void ResetCamera()
         {
-            // Dynamically enumerate all visible, non-minimized windows (with IsIgnoredWindow check)
-            var currentRects = new Dictionary<IntPtr, WinApi.RECT>();
-            WinApi.EnumWindows((hWnd, lParam) =>
+            // 1. Если база пуста (например, при самом первом запуске до драга), заполняем её текущими окнами
+            if (initialWindowPositions.Count == 0)
             {
-                // Skip invisible windows
-                if (!WinApi.IsWindowVisible(hWnd))
-                    return true;
-
-                // Skip minimized windows
-                if (WinApi.IsIconic(hWnd))
-                    return true;
-
-                // Skip windows with empty title
-                int titleLen = WinApi.GetWindowTextLength(hWnd);
-                if (titleLen == 0)
-                    return true;
-
-                // Get window class name to filter out system UI
-                var classNameBuilder = new System.Text.StringBuilder(256);
-                WinApi.GetClassName(hWnd, classNameBuilder, classNameBuilder.Capacity);
-                string className = classNameBuilder.ToString();
-
-                // Skip ignored windows
-                if (IsIgnoredWindow(className))
+                WinApi.EnumWindows((hWnd, lParam) =>
                 {
+                    if (!WinApi.IsWindowVisible(hWnd) || WinApi.IsIconic(hWnd)) return true;
+                    if (WinApi.GetWindowTextLength(hWnd) == 0) return true;
+                    var cls = new StringBuilder(256);
+                    WinApi.GetClassName(hWnd, cls, cls.Capacity);
+                    if (IsIgnoredWindow(cls.ToString())) return true;
+
+                    if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
+                    {
+                        if (rect.Left > -10000 && rect.Top > -10000)
+                        {
+                            // Сохраняем с учетом текущего обратного смещения, чтобы получить «чистые» базовые координаты
+                            initialWindowPositions[hWnd] = new WinApi.RECT
+                            {
+                                Left = rect.Left - (int)Math.Round(targetDx),
+                                Top = rect.Top - (int)Math.Round(targetDy),
+                                Right = rect.Right - (int)Math.Round(targetDx),
+                                Bottom = rect.Bottom - (int)Math.Round(targetDy)
+                            };
+                        }
+                    }
                     return true;
-                }
+                }, IntPtr.Zero);
+            }
 
-                // Get window rectangle
-                if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
-                {
-                    // Skip windows with invalid coordinates (far off-screen)
-                    if (rect.Left < -10000 || rect.Top < -10000)
-                        return true;
-
-                    // Store current position
-                    currentRects[hWnd] = rect;
-                }
-
-                return true; // continue enumeration
-            }, IntPtr.Zero);
-
-            // If no valid windows, do nothing
-            if (currentRects.Count == 0)
+            if (initialWindowPositions.Count == 0)
                 return;
 
-            // Compute bounding box of current rectangles
-            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
-            foreach (var rect in currentRects.Values)
+            // 2. Вычисляем текущий bounding box окон на основе ИХ ЦЕЛЕВЫХ позиций
+            // (то есть база + текущий targetDx / targetDy)
+            int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
+            foreach (var kvp in initialWindowPositions)
             {
-                if (rect.Left < minX) minX = rect.Left;
-                if (rect.Top < minY) minY = rect.Top;
-                if (rect.Right > maxX) maxX = rect.Right;
-                if (rect.Bottom > maxY) maxY = rect.Bottom;
+                var rect = kvp.Value;
+                int tLeft = rect.Left + (int)Math.Round(targetDx);
+                int tTop = rect.Top + (int)Math.Round(targetDy);
+                int tRight = rect.Right + (int)Math.Round(targetDx);
+                int tBottom = rect.Bottom + (int)Math.Round(targetDy);
+
+                if (tLeft < minX) minX = tLeft;
+                if (tTop < minY) minY = tTop;
+                if (tRight > maxX) maxX = tRight;
+                if (tBottom > maxY) maxY = tBottom;
             }
 
-            // Compute center of the group
-            float groupCenterX = (minX + maxX) / 2f;
-            float groupCenterY = (minY + maxY) / 2f;
+            // 3. Вычисляем текущий центр группы окон
+            int groupCenterX = (minX + maxX) / 2;
+            int groupCenterY = (minY + maxY) / 2;
 
-            // Get the center of the primary monitor
+            // 4. Получаем центр главного экрана
             Rectangle primaryScreenBounds = Screen.PrimaryScreen!.Bounds;
-            float screenCenterX = primaryScreenBounds.X + primaryScreenBounds.Width / 2f;
-            float screenCenterY = primaryScreenBounds.Y + primaryScreenBounds.Height / 2f;
+            int screenCenterX = primaryScreenBounds.X + primaryScreenBounds.Width / 2;
+            int screenCenterY = primaryScreenBounds.Y + primaryScreenBounds.Height / 2;
 
-            // Compute absolute delta to center the group on screen
-            float deltaX = screenCenterX - groupCenterX;
-            float deltaY = screenCenterY - groupCenterY;
+            // 5. Вычисляем дельту сдвига и прибавляем её к целевому смещению
+            int deltaX = screenCenterX - groupCenterX;
+            int deltaY = screenCenterY - groupCenterY;
 
-            // Update base cache with current positions
-            initialWindowPositions.Clear();
-            foreach (var kvp in currentRects)
-            {
-                initialWindowPositions[kvp.Key] = kvp.Value;
-            }
-
-            // Reset current animation and set target to the computed delta
-            currentDx = 0f;
-            currentDy = 0f;
-            targetDx = deltaX;
-            targetDy = deltaY;
+            targetDx += deltaX;
+            targetDy += deltaY;
         }
 
         /// <summary>
