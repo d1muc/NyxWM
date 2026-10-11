@@ -58,6 +58,11 @@ namespace nyxWM
         public const uint WINEVENT_SKIPOWNPROCESS = 2;
         public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
 
+        // Window styles
+        public const int GWL_STYLE = -16;
+        public const int WS_CAPTION = 0x00C00000;
+        public const int WS_POPUP = unchecked((int)0x80000000);
+
         // Imported functions
         [DllImport("user32.dll")]
         public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
@@ -109,6 +114,9 @@ namespace nyxWM
 
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+        [DllImport("user32.dll")]
+        public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
 
         // Delegates for callback functions
         public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);

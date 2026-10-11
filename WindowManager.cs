@@ -144,10 +144,21 @@ namespace nyxWM
                     Rectangle screenBounds = Screen.PrimaryScreen!.Bounds;
 
                     // Check if the window covers the entire primary screen (fullscreen)
-                    bool isFullscreen = (windowRect.Left == screenBounds.Left &&
-                                         windowRect.Top == screenBounds.Top &&
-                                         (windowRect.Right - windowRect.Left) == screenBounds.Width &&
-                                         (windowRect.Bottom - windowRect.Top) == screenBounds.Height);
+                    bool coversFullScreen = (windowRect.Left == screenBounds.Left &&
+                                             windowRect.Top == screenBounds.Top &&
+                                             (windowRect.Right - windowRect.Left) == screenBounds.Width &&
+                                             (windowRect.Bottom - windowRect.Top) == screenBounds.Height);
+                    // If it covers the screen, check window style to see if it's borderless (no caption) or popup
+                    bool isFullscreen = false;
+                    if (coversFullScreen)
+                    {
+                        int style = WinApi.GetWindowLong(hwnd, WinApi.GWL_STYLE);
+                        // If window lacks a caption, treat as fullscreen for pause (typical for borderless games)
+                        if ((style & WinApi.WS_CAPTION) == 0)
+                        {
+                            isFullscreen = true;
+                        }
+                    }
 
                     // Get the process ID of the foreground window
                     uint processId;
@@ -276,11 +287,11 @@ namespace nyxWM
             int deltaX = screenCenterX - winCenterX;
             int deltaY = screenCenterY - winCenterY;
 
-            // Reset current offsets and set target to move to center
+            // Accumulate target offset and reset current offset
+            targetDx += deltaX;
+            targetDy += deltaY;
             currentDx = 0;
             currentDy = 0;
-            targetDx = deltaX;
-            targetDy = deltaY;
         }
 
         /// <summary>
