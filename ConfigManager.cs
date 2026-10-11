@@ -89,6 +89,7 @@ namespace nyxWM
                 FallbackRefreshRate = 60,
                 LerpRatePerSecond = 8.0f,
                 AutoCenterOnFocusDefault = true,
+                PauseOnFullscreen = true,
                 IgnoredWindowClassNames = new[] { "Shell_TrayWnd", "Progman", "WorkerW" },
                 Hotkeys = new HotkeySettings
                 {
@@ -118,6 +119,8 @@ namespace nyxWM
                 settings.LerpRatePerSecond = 8.0f;
                 changed = true;
             }
+
+            // PauseOnFullscreen is a boolean, no validation needed beyond ensuring it's not null (but it's a value type)
 
             if (settings.IgnoredWindowClassNames == null || settings.IgnoredWindowClassNames.Length == 0)
             {
@@ -185,13 +188,18 @@ namespace nyxWM
         public bool AutoCenterOnFocusDefault { get; set; }
 
         /// <summary>
+        /// Whether to automatically pause when a fullscreen application is detected to avoid anti-cheat triggers.
+        /// </summary>
+        public bool PauseOnFullscreen { get; set; } = true;
+
+        /// <summary>
         /// List of window class names to ignore when tiling/moving windows.
         /// </summary>
         public string[] IgnoredWindowClassNames { get; set; } = Array.Empty<string>();
 
         /// <summary>
         /// Hotkey configurations.
-        /// </summary>
+        /// </>
         public HotkeySettings Hotkeys { get; set; } = new HotkeySettings();
     }
 

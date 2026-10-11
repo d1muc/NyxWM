@@ -40,6 +40,9 @@ namespace nyxWM
         // Lerp tuning - how quickly we catch up to target (per second)
         private readonly float _lerpRatePerSecond;
 
+        // Pause on fullscreen flag
+        private bool _isPaused = false;
+
         // Auto-center on focus flag
         public bool AutoCenterOnFocus { get; set; }
 
@@ -131,6 +134,44 @@ namespace nyxWM
         /// <param name="hwnd">The handle of the window that gained focus.</param>
         private void HandleFocusChange(IntPtr hwnd)
         {
+            // Handle pause on fullscreen feature
+            if (ConfigManager.Current.PauseOnFullscreen)
+            {
+                // Get the foreground window rectangle
+                if (WinApi.GetWindowRect(hwnd, out WinApi.RECT windowRect))
+                {
+                    // Get primary screen bounds
+                    Rectangle screenBounds = Screen.PrimaryScreen!.Bounds;
+
+                    // Check if the window covers the entire primary screen (fullscreen)
+                    bool isFullscreen = (windowRect.Left == screenBounds.Left &&
+                                         windowRect.Top == screenBounds.Top &&
+                                         (windowRect.Right - windowRect.Left) == screenBounds.Width &&
+                                         (windowRect.Bottom - windowRect.Top) == screenBounds.Height);
+
+                    // Get the process ID of the foreground window
+                    uint processId;
+                    WinApi.GetWindowThreadProcessId(hwnd, out processId);
+
+                    // Get current process ID for comparison
+                    int currentProcessId = Process.GetCurrentProcess().Id;
+
+                    // Pause if: window is fullscreen AND it's not our own process
+                    if (isFullscreen && processId != currentProcessId)
+                    {
+                        _isPaused = true;
+                    }
+                    else
+                    {
+                        _isPaused = false;
+                    }
+                }
+            }
+            else
+            {
+                _isPaused = false;
+            }
+
             // Debug output
             int debugTitleLen = WinApi.GetWindowTextLength(hwnd);
             if (debugTitleLen > 0)
@@ -423,6 +464,10 @@ namespace nyxWM
         /// <param name="deltaTime">Time elapsed since last update in milliseconds</param>
         public void UpdatePosition(float deltaTime)
         {
+            // If paused due to fullscreen application, skip all processing
+            if (_isPaused)
+                return;
+
             // If dragging, update target based on mouse movement and warp cursor
             if (isDragging)
             {

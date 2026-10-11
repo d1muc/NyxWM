@@ -8,6 +8,9 @@
   // Default value for the auto-center-on-focus feature.
   "autoCenterOnFocusDefault": true,
 
+  // Whether to automatically pause when a fullscreen application is detected to avoid anti-cheat triggers.
+  "pauseOnFullscreen": true,
+
   // List of window class names to ignore when tiling/moving windows.
   "ignoredWindowClassNames": [
     "Shell_TrayWnd",  // Taskbar
