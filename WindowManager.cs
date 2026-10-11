@@ -320,9 +320,7 @@ namespace nyxWM
         public void ResetCamera()
         {
             // Dictionary to hold current window positions
-            Dictionary<IntPtr, WinApi.RECT> currentPositions = new Dictionary<IntPtr, WinApi.RECT>();
-
-            // Enumerate all top-level windows to get current positions
+            var currentPositions = new Dictionary<IntPtr, WinApi.RECT>();
             WinApi.EnumWindows((hWnd, lParam) =>
             {
                 // Skip invisible windows
@@ -334,15 +332,13 @@ namespace nyxWM
                     return true;
 
                 // Get window class name to filter out system UI
-                var classNameBuilder = new StringBuilder(256);
+                var classNameBuilder = new System.Text.StringBuilder(256);
                 WinApi.GetClassName(hWnd, classNameBuilder, classNameBuilder.Capacity);
                 string className = classNameBuilder.ToString();
 
                 // Skip ignored windows
                 if (IsIgnoredWindow(className))
-                {
                     return true;
-                }
 
                 // Get window rectangle
                 if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
@@ -358,7 +354,7 @@ namespace nyxWM
             if (currentPositions.Count == 0)
                 return;
 
-            // Compute bounding box from current positions
+            // Compute bounding box
             int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
             foreach (var rect in currentPositions.Values)
             {
@@ -369,29 +365,32 @@ namespace nyxWM
             }
 
             // Compute center of the bounding box
-            int centerX = (minX + maxX) / 2;
-            int centerY = (minY + maxY) / 2;
+            int groupCenterX = (minX + maxX) / 2;
+            int groupCenterY = (minY + maxY) / 2;
 
             // Get the center of the primary monitor
             Rectangle primaryScreenBounds = Screen.PrimaryScreen!.Bounds;
             int screenCenterX = primaryScreenBounds.X + primaryScreenBounds.Width / 2;
             int screenCenterY = primaryScreenBounds.Y + primaryScreenBounds.Height / 2;
 
-            // Compute delta needed to move the windows' center to the screen center
-            int deltaX = screenCenterX - centerX;
-            int deltaY = screenCenterY - centerY;
+            // Compute delta needed to move the group's center to screen center
+            int deltaX = screenCenterX - groupCenterX;
+            int deltaY = screenCenterY - groupCenterY;
 
-            // IMPORTANT: Update initialWindowPositions with current positions
+            // Update base and reset animation
             initialWindowPositions.Clear();
             foreach (var kvp in currentPositions)
             {
                 initialWindowPositions[kvp.Key] = kvp.Value;
             }
 
-            // Apply delta to current offset to center the group
-            targetDx = currentDx + deltaX;
-            targetDy = currentDy + deltaY;
-            // currentDx and currentDy remain unchanged (they will lerp towards target)
+            // Reset current animation progress
+            currentDx = 0;
+            currentDy = 0;
+
+            // Set target offset to move to center
+            targetDx = deltaX;
+            targetDy = deltaY;
         }
 
         /// <summary>
