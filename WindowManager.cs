@@ -377,12 +377,9 @@ namespace nyxWM
             int deltaX = screenCenterX - groupCenterX;
             int deltaY = screenCenterY - groupCenterY;
 
-            // Update base and reset animation
-            initialWindowPositions.Clear();
-            foreach (var kvp in currentPositions)
-            {
-                initialWindowPositions[kvp.Key] = kvp.Value;
-            }
+            // FIXED: Remove the false cache update during reset animation
+            // The base cache initialWindowPositions should only be updated during actual dragging
+            // Not during ResetCamera() as it causes the animation to collapse
 
             // Reset current animation progress
             currentDx = 0;
@@ -391,6 +388,10 @@ namespace nyxWM
             // Set target offset to move to center
             targetDx = deltaX;
             targetDy = deltaY;
+
+            // For instant snap (as requested), teleport current position to target
+            currentDx = targetDx;
+            currentDy = targetDy;
         }
 
         /// <summary>
