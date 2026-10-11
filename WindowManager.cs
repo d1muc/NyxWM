@@ -319,38 +319,25 @@ namespace nyxWM
         /// </summary>
         public void ResetCamera()
         {
-            var windowData = new Dictionary<IntPtr, WinApi.RECT>();
-            WinApi.EnumWindows((hWnd, lParam) =>
-            {
-                if (!WinApi.IsWindowVisible(hWnd) || WinApi.IsIconic(hWnd))
-                    return true;
-                if (WinApi.GetWindowTextLength(hWnd) == 0)
-                    return true;
-                var classNameBuilder = new System.Text.StringBuilder(256);
-                WinApi.GetClassName(hWnd, classNameBuilder, classNameBuilder.Capacity);
-                string className = classNameBuilder.ToString();
-                if (IsIgnoredWindow(className))
-                    return true;
-                if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
-                {
-                    if (rect.Left < -10000 || rect.Top < -10000)
-                        return true;
-                    windowData[hWnd] = rect;
-                }
-                return true;
-            }, IntPtr.Zero);
-
-            if (windowData.Count == 0)
+            // If we don't have initial window positions, we can't reset properly
+            if (initialWindowPositions.Count == 0)
                 return;
 
-            // Calculate bounding box
+            // Calculate bounding box based on current actual positions of windows
+            // Current position = base position + target offset
             int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
-            foreach (var rect in windowData.Values)
+            foreach (var kvp in initialWindowPositions)
             {
-                if (rect.Left < minX) minX = rect.Left;
-                if (rect.Top < minY) minY = rect.Top;
-                if (rect.Right > maxX) maxX = rect.Right;
-                if (rect.Bottom > maxY) maxY = rect.Bottom;
+                WinApi.RECT baseRect = kvp.Value;
+                int currentLeft = baseRect.Left + (int)Math.Round(targetDx);
+                int currentTop = baseRect.Top + (int)Math.Round(targetDy);
+                int currentRight = baseRect.Right + (int)Math.Round(targetDx);
+                int currentBottom = baseRect.Bottom + (int)Math.Round(targetDy);
+
+                if (currentLeft < minX) minX = currentLeft;
+                if (currentTop < minY) minY = currentTop;
+                if (currentRight > maxX) maxX = currentRight;
+                if (currentBottom > maxY) maxY = currentBottom;
             }
 
             int groupCenterX = (minX + maxX) / 2;
@@ -360,19 +347,14 @@ namespace nyxWM
             int screenCenterX = primaryScreenBounds.X + primaryScreenBounds.Width / 2;
             int screenCenterY = primaryScreenBounds.Y + primaryScreenBounds.Height / 2;
 
+            // Calculate delta needed to center the group on screen
             int deltaX = screenCenterX - groupCenterX;
             int deltaY = screenCenterY - groupCenterY;
 
-            // Update base cache with fresh rectangles (no offset)
-            initialWindowPositions.Clear();
-            foreach (var kvp in windowData)
-            {
-                initialWindowPositions[kvp.Key] = kvp.Value;
-            }
-
-            // Accumulate delta to target for smooth Lerp
-            targetDx += deltaX;
-            targetDy += deltaY;
+            // Set target offset to center the group (don't accumulate, just set)
+            // This prevents double-offset bug
+            targetDx = deltaX;
+            targetDy = deltaY;
         }
 
         /// <summary>
