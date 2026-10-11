@@ -319,68 +319,58 @@ namespace nyxWM
         /// </summary>
         public void ResetCamera()
         {
-            // 1. Если база пуста (например, при самом первом запуске до драга), заполняем её текущими окнами
-            if (initialWindowPositions.Count == 0)
+            var windowData = new Dictionary<IntPtr, WinApi.RECT>();
+            WinApi.EnumWindows((hWnd, lParam) =>
             {
-                WinApi.EnumWindows((hWnd, lParam) =>
-                {
-                    if (!WinApi.IsWindowVisible(hWnd) || WinApi.IsIconic(hWnd)) return true;
-                    if (WinApi.GetWindowTextLength(hWnd) == 0) return true;
-                    var cls = new StringBuilder(256);
-                    WinApi.GetClassName(hWnd, cls, cls.Capacity);
-                    if (IsIgnoredWindow(cls.ToString())) return true;
-
-                    if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
-                    {
-                        if (rect.Left > -10000 && rect.Top > -10000)
-                        {
-                            // Сохраняем с учетом текущего обратного смещения, чтобы получить «чистые» базовые координаты
-                            initialWindowPositions[hWnd] = new WinApi.RECT
-                            {
-                                Left = rect.Left - (int)Math.Round(targetDx),
-                                Top = rect.Top - (int)Math.Round(targetDy),
-                                Right = rect.Right - (int)Math.Round(targetDx),
-                                Bottom = rect.Bottom - (int)Math.Round(targetDy)
-                            };
-                        }
-                    }
+                if (!WinApi.IsWindowVisible(hWnd) || WinApi.IsIconic(hWnd))
                     return true;
-                }, IntPtr.Zero);
-            }
+                if (WinApi.GetWindowTextLength(hWnd) == 0)
+                    return true;
+                var classNameBuilder = new System.Text.StringBuilder(256);
+                WinApi.GetClassName(hWnd, classNameBuilder, classNameBuilder.Capacity);
+                string className = classNameBuilder.ToString();
+                if (IsIgnoredWindow(className))
+                    return true;
+                if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
+                {
+                    if (rect.Left < -10000 || rect.Top < -10000)
+                        return true;
+                    windowData[hWnd] = rect;
+                }
+                return true;
+            }, IntPtr.Zero);
 
-            if (initialWindowPositions.Count == 0)
+            if (windowData.Count == 0)
                 return;
 
-            // 2. Вычисляем текущий bounding box окон на основе ИХ ЦЕЛЕВЫХ позиций
-            // (то есть база + текущий targetDx / targetDy)
+            // Calculate bounding box
             int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
-            foreach (var kvp in initialWindowPositions)
+            foreach (var rect in windowData.Values)
             {
-                var rect = kvp.Value;
-                int tLeft = rect.Left + (int)Math.Round(targetDx);
-                int tTop = rect.Top + (int)Math.Round(targetDy);
-                int tRight = rect.Right + (int)Math.Round(targetDx);
-                int tBottom = rect.Bottom + (int)Math.Round(targetDy);
-
-                if (tLeft < minX) minX = tLeft;
-                if (tTop < minY) minY = tTop;
-                if (tRight > maxX) maxX = tRight;
-                if (tBottom > maxY) maxY = tBottom;
+                if (rect.Left < minX) minX = rect.Left;
+                if (rect.Top < minY) minY = rect.Top;
+                if (rect.Right > maxX) maxX = rect.Right;
+                if (rect.Bottom > maxY) maxY = rect.Bottom;
             }
 
-            // 3. Вычисляем текущий центр группы окон
             int groupCenterX = (minX + maxX) / 2;
             int groupCenterY = (minY + maxY) / 2;
 
-            // 4. Получаем центр главного экрана
             Rectangle primaryScreenBounds = Screen.PrimaryScreen!.Bounds;
             int screenCenterX = primaryScreenBounds.X + primaryScreenBounds.Width / 2;
             int screenCenterY = primaryScreenBounds.Y + primaryScreenBounds.Height / 2;
 
-            // 5. Вычисляем дельту сдвига и прибавляем её к целевому смещению
             int deltaX = screenCenterX - groupCenterX;
             int deltaY = screenCenterY - groupCenterY;
 
+            // Update base cache with fresh rectangles (no offset)
+            initialWindowPositions.Clear();
+            foreach (var kvp in windowData)
+            {
+                initialWindowPositions[kvp.Key] = kvp.Value;
+            }
+
+            // Accumulate delta to target for smooth Lerp
             targetDx += deltaX;
             targetDy += deltaY;
         }
