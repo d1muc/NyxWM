@@ -319,43 +319,87 @@ namespace nyxWM
         /// </summary>
         public void ResetCamera()
         {
-            // If no initial positions, do nothing
-            if (initialWindowPositions.Count == 0)
+            // Dynamically enumerate all visible, non-minimized windows (with IsIgnoredWindow check)
+            var currentRects = new Dictionary<IntPtr, WinApi.RECT>();
+            WinApi.EnumWindows((hWnd, lParam) =>
+            {
+                // Skip invisible windows
+                if (!WinApi.IsWindowVisible(hWnd))
+                    return true;
+
+                // Skip minimized windows
+                if (WinApi.IsIconic(hWnd))
+                    return true;
+
+                // Skip windows with empty title
+                int titleLen = WinApi.GetWindowTextLength(hWnd);
+                if (titleLen == 0)
+                    return true;
+
+                // Get window class name to filter out system UI
+                var classNameBuilder = new System.Text.StringBuilder(256);
+                WinApi.GetClassName(hWnd, classNameBuilder, classNameBuilder.Capacity);
+                string className = classNameBuilder.ToString();
+
+                // Skip ignored windows
+                if (IsIgnoredWindow(className))
+                {
+                    return true;
+                }
+
+                // Get window rectangle
+                if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
+                {
+                    // Skip windows with invalid coordinates (far off-screen)
+                    if (rect.Left < -10000 || rect.Top < -10000)
+                        return true;
+
+                    // Store current position
+                    currentRects[hWnd] = rect;
+                }
+
+                return true; // continue enumeration
+            }, IntPtr.Zero);
+
+            // If no valid windows, do nothing
+            if (currentRects.Count == 0)
                 return;
 
-            // Compute bounding box of target positions (initial + target offset) in float
+            // Compute bounding box of current rectangles
             float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
-            foreach (var kvp in initialWindowPositions)
+            foreach (var rect in currentRects.Values)
             {
-                WinApi.RECT rect = kvp.Value;
-                // Apply target offset to get target position (as float)
-                float targetLeft = rect.Left + targetDx;
-                float targetTop = rect.Top + targetDy;
-                float targetRight = rect.Right + targetDx;
-                float targetBottom = rect.Bottom + targetDy;
-
-                if (targetLeft < minX) minX = targetLeft;
-                if (targetTop < minY) minY = targetTop;
-                if (targetRight > maxX) maxX = targetRight;
-                if (targetBottom > maxY) maxY = targetBottom;
+                if (rect.Left < minX) minX = rect.Left;
+                if (rect.Top < minY) minY = rect.Top;
+                if (rect.Right > maxX) maxX = rect.Right;
+                if (rect.Bottom > maxY) maxY = rect.Bottom;
             }
 
-            // Compute center of the target bounding box
-            float groupCenterX_target = (minX + maxX) / 2f;
-            float groupCenterY_target = (minY + maxY) / 2f;
+            // Compute center of the group
+            float groupCenterX = (minX + maxX) / 2f;
+            float groupCenterY = (minY + maxY) / 2f;
 
             // Get the center of the primary monitor
             Rectangle primaryScreenBounds = Screen.PrimaryScreen!.Bounds;
             float screenCenterX = primaryScreenBounds.X + primaryScreenBounds.Width / 2f;
             float screenCenterY = primaryScreenBounds.Y + primaryScreenBounds.Height / 2f;
 
-            // Compute remaining delta to center the target group on screen
-            float deltaX = screenCenterX - groupCenterX_target;
-            float deltaY = screenCenterY - groupCenterY_target;
+            // Compute absolute delta to center the group on screen
+            float deltaX = screenCenterX - groupCenterX;
+            float deltaY = screenCenterY - groupCenterY;
 
-            // Adjust target offset by this delta
-            targetDx += deltaX;
-            targetDy += deltaY;
+            // Update base cache with current positions
+            initialWindowPositions.Clear();
+            foreach (var kvp in currentRects)
+            {
+                initialWindowPositions[kvp.Key] = kvp.Value;
+            }
+
+            // Reset current animation and set target to the computed delta
+            currentDx = 0f;
+            currentDy = 0f;
+            targetDx = deltaX;
+            targetDy = deltaY;
         }
 
         /// <summary>
