@@ -29,7 +29,8 @@ namespace nyxWM
             var mouseHook = new MouseHook();
 
             // Get monitor refresh rate for timer setup
-            int refreshRate = MonitorUtils.GetPrimaryMonitorRefreshRate(165);
+            int fallbackRefreshRate = ConfigManager.Current.FallbackRefreshRate;
+            int refreshRate = MonitorUtils.GetPrimaryMonitorRefreshRate(fallbackRefreshRate);
             int intervalMs = Math.Max(1, (int)(1000.0 / refreshRate)); // Calculate interval for target refresh rate
 
             Console.WriteLine($"Setting up render timer for {refreshRate} Hz ({intervalMs} ms interval)");
@@ -50,10 +51,9 @@ namespace nyxWM
             mouseHook.OnDragStart += () => windowManager.StartDragging();
             mouseHook.OnDragStop += () => windowManager.StopDragging();
 
-            // Register Ctrl+R hotkey for resetting camera
-            RegisterHotKey(IntPtr.Zero, 0x0000, MOD_CONTROL, VK_R);
-            // Register Ctrl+T hotkey for toggling auto-center-on-focus
-            RegisterHotKey(IntPtr.Zero, 0x0001, MOD_CONTROL, VK_T);
+            // Register hotkeys from configuration
+            RegisterConfiguredHotkeys();
+
             Application.AddMessageFilter(new HotkeyMessageFilter(windowManager));
 
             // Start the mouse hook
@@ -72,6 +72,120 @@ namespace nyxWM
 
             // Run the application message loop
             Application.Run();
+        }
+
+        /// <summary>
+        /// Registers hotkeys based on the configuration.
+        /// </summary>
+        private static void RegisterConfiguredHotkeys()
+        {
+            var config = ConfigManager.Current;
+
+            // Reset camera hotkey
+            uint resetCameraModifiers = ParseModifierString(config.Hotkeys.ResetCamera.Modifiers);
+            uint resetCameraKey = ParseKeyString(config.Hotkeys.ResetCamera.Key);
+            if (!RegisterHotKey(IntPtr.Zero, 0x0000, resetCameraModifiers, resetCameraKey))
+            {
+                Console.WriteLine("Failed to register reset camera hotkey.");
+            }
+
+            // Toggle auto-center hotkey
+            uint toggleModifiers = ParseModifierString(config.Hotkeys.ToggleAutoCenter.Modifiers);
+            uint toggleKey = ParseKeyString(config.Hotkeys.ToggleAutoCenter.Key);
+            if (!RegisterHotKey(IntPtr.Zero, 0x0001, toggleModifiers, toggleKey))
+            {
+                Console.WriteLine("Failed to register toggle auto-center hotkey.");
+            }
+        }
+
+        /// <summary>
+        /// Converts a modifier string (e.g., "CONTROL+SHIFT") to the corresponding modifier flags.
+        /// </summary>
+        private static uint ParseModifierString(string modifierString)
+        {
+            uint result = 0;
+            string[] parts = modifierString.Split('+', StringSplitOptions.RemoveEmptyEntries);
+            foreach (string part in parts)
+            {
+                string trimmed = part.Trim().ToUpperInvariant();
+                switch (trimmed)
+                {
+                    case "CONTROL":
+                        result |= 0x0002; // MOD_CONTROL
+                        break;
+                    case "ALT":
+                        result |= 0x0001; // MOD_ALT
+                        break;
+                    case "SHIFT":
+                        result |= 0x0004; // MOD_SHIFT
+                        break;
+                    case "WIN":
+                    case "LWIN":
+                    case "RWIN":
+                        result |= 0x0008; // MOD_WIN
+                        break;
+                    default:
+                        Console.WriteLine($"Unknown modifier part: {trimmed}");
+                        break;
+                }
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Converts a key string (e.g., "A", "F1") to the corresponding virtual key code.
+        /// </summary>
+        private static uint ParseKeyString(string keyString)
+        {
+            if (string.IsNullOrEmpty(keyString))
+                return 0;
+
+            string key = keyString.Trim().ToUpperInvariant();
+
+            // Handle single character keys (A-Z, 0-9)
+            if (key.Length == 1)
+            {
+                char c = key[0];
+                if (c >= 'A' && c <= 'Z')
+                    return (uint)c;
+                if (c >= '0' && c <= '9')
+                    return (uint)c;
+            }
+
+            // Handle special keys
+            switch (key)
+            {
+                case "F1": return 0x70;
+                case "F2": return 0x71;
+                case "F3": return 0x72;
+                case "F4": return 0x73;
+                case "F5": return 0x74;
+                case "F6": return 0x75;
+                case "F7": return 0x76;
+                case "F8": return 0x77;
+                case "F9": return 0x78;
+                case "F10": return 0x79;
+                case "F11": return 0x7A;
+                case "F12": return 0x7B;
+                case "LEFT": return 0x25;
+                case "UP": return 0x26;
+                case "RIGHT": return 0x27;
+                case "DOWN": return 0x28;
+                case "ENTER": return 0x0D;
+                case "ESC": return 0x1B;
+                case "SPACE": return 0x20;
+                case "TAB": return 0x09;
+                case "BACKSPACE": return 0x08;
+                case "DELETE": return 0x2E;
+                case "INSERT": return 0x2D;
+                case "HOME": return 0x24;
+                case "END": return 0x23;
+                case "PAGEUP": return 0x21;
+                case "PAGEDOWN": return 0x22;
+                default:
+                    Console.WriteLine($"Unknown key: {keyString}. Using 0.");
+                    return 0;
+            }
         }
     }
 
@@ -92,12 +206,14 @@ namespace nyxWM
             if (m.Msg == Program.WM_HOTKEY)
             {
                 int wParam = m.WParam.ToInt32();
-                if (wParam == 0x0000) // Ctrl+R: Reset camera
+                // Note: We don't have the actual modifier and key values here, but we can compare wParam to our registered IDs.
+                // We registered two hotkeys with IDs 0x0000 and 0x0001.
+                if (wParam == 0x0000) // Reset camera
                 {
                     _windowManager.ResetCamera();
                     return true; // Message handled
                 }
-                else if (wParam == 0x0001) // Ctrl+T: Toggle auto-center-on-focus
+                else if (wParam == 0x0001) // Toggle auto-center-on-focus
                 {
                     _windowManager.ToggleAutoCenter();
                     return true; // Message handled

@@ -38,10 +38,10 @@ namespace nyxWM
         private float _targetDeltaTime => 1000f / _monitorRefreshRate; // Target time per frame in ms
 
         // Lerp tuning - how quickly we catch up to target (per second)
-        private const float LerpRatePerSecond = 8.0f;
+        private readonly float _lerpRatePerSecond;
 
         // Auto-center on focus flag
-        public bool AutoCenterOnFocus { get; set; } = true;
+        public bool AutoCenterOnFocus { get; set; }
 
         /// <summary>
         /// Toggles the auto-center-on-focus feature.
@@ -59,7 +59,7 @@ namespace nyxWM
 
         /// <summary>
         /// Constructor: sets up the WinEvent hook for foreground window changes.
-        /// </summary>
+        /// </>
         public WindowManager()
         {
             // Ensure a synchronization context exists for the current thread
@@ -70,9 +70,15 @@ namespace nyxWM
             // Capture the synchronization context from the UI thread
             _syncContext = SynchronizationContext.Current;
 
-            // Get monitor refresh rate with fallback
-            _monitorRefreshRate = MonitorUtils.GetPrimaryMonitorRefreshRate(165);
+            // Get monitor refresh rate with fallback from config
+            _monitorRefreshRate = MonitorUtils.GetPrimaryMonitorRefreshRate(ConfigManager.Current.FallbackRefreshRate);
             Console.WriteLine($"Detected monitor refresh rate: {_monitorRefreshRate} Hz");
+
+            // Get lerp rate from config
+            _lerpRatePerSecond = ConfigManager.Current.LerpRatePerSecond;
+
+            // Set auto-center-on-focus default from config
+            AutoCenterOnFocus = ConfigManager.Current.AutoCenterOnFocusDefault;
 
             // Initialize stopwatch for frame timing
             _stopwatch.Start();
@@ -157,10 +163,8 @@ namespace nyxWM
             WinApi.GetClassName(hwnd, classNameBuilder, classNameBuilder.Capacity);
             string className = classNameBuilder.ToString();
 
-            // Skip taskbar and desktop windows
-            if (className == "Shell_TrayWnd" || // Taskbar
-                className == "Progman" ||       // Desktop background
-                className == "WorkerW")         // Desktop worker
+            // Skip ignored windows
+            if (IsIgnoredWindow(className))
             {
                 return;
             }
@@ -187,10 +191,8 @@ namespace nyxWM
                 WinApi.GetClassName(hWnd, winClassNameBuilder, winClassNameBuilder.Capacity);
                 string winClassName = winClassNameBuilder.ToString();
 
-                // Skip taskbar and desktop windows
-                if (winClassName == "Shell_TrayWnd" || // Taskbar
-                    winClassName == "Progman" ||       // Desktop background
-                    winClassName == "WorkerW")         // Desktop worker
+                // Skip ignored windows
+                if (IsIgnoredWindow(winClassName))
                 {
                     return true;
                 }
@@ -234,6 +236,21 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Checks if a window class name is in the ignored list.
+        /// </summary>
+        private bool IsIgnoredWindow(string className)
+        {
+            foreach (var ignored in ConfigManager.Current.IgnoredWindowClassNames)
+            {
+                if (string.Equals(className, ignored, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
         /// Called when drag starts: records mouse position, resets Lerp variables, and caches initial window positions.
         /// </summary>
         public void StartDragging()
@@ -270,10 +287,8 @@ namespace nyxWM
                 WinApi.GetClassName(hWnd, classNameBuilder, classNameBuilder.Capacity);
                 string className = classNameBuilder.ToString();
 
-                // Skip taskbar and desktop windows
-                if (className == "Shell_TrayWnd" || // Taskbar
-                    className == "Progman" ||       // Desktop background
-                    className == "WorkerW")         // Desktop worker
+                // Skip ignored windows
+                if (IsIgnoredWindow(className))
                 {
                     return true;
                 }
@@ -328,10 +343,8 @@ namespace nyxWM
                 WinApi.GetClassName(hWnd, classNameBuilder, classNameBuilder.Capacity);
                 string className = classNameBuilder.ToString();
 
-                // Skip taskbar and desktop windows
-                if (className == "Shell_TrayWnd" || // Taskbar
-                    className == "Progman" ||       // Desktop background
-                    className == "WorkerW")         // Desktop worker
+                // Skip ignored windows
+                if (IsIgnoredWindow(className))
                 {
                     return true;
                 }
@@ -414,7 +427,7 @@ namespace nyxWM
 
             // Apply frame-rate independent Lerp smoothing: current chases target
             // Convert LerpRatePerSecond to a per-millisecond rate, then calculate factor for this deltaTime
-            float lerpFactor = 1.0f - MathF.Exp(-LerpRatePerSecond * deltaTime / 1000.0f);
+            float lerpFactor = 1.0f - MathF.Exp(-_lerpRatePerSecond * deltaTime / 1000.0f);
             currentDx += (targetDx - currentDx) * lerpFactor;
             currentDy += (targetDy - currentDy) * lerpFactor;
 

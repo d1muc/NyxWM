@@ -49,7 +49,7 @@ namespace nyxWM
         }
 
         [DllImport("user32.dll")]
-        private static extern int EnumDisplaySettings(string lpszDeviceName, int iModeNum, ref DEVMODE lpDevMode);
+        private static extern int EnumDisplaySettings(IntPtr lpszDeviceName, int iModeNum, ref DEVMODE lpDevMode);
 
         private const int ENUM_CURRENT_SETTINGS = -1;
         private const int ENUM_REGISTRY_SETTINGS = -2;
@@ -66,7 +66,7 @@ namespace nyxWM
                 // Fix CS0266: Explicitly cast int to short
                 dm.dmSize = (short)Marshal.SizeOf<DEVMODE>();
 
-                if (EnumDisplaySettings(null, ENUM_CURRENT_SETTINGS, ref dm) != 0)
+                if (EnumDisplaySettings(IntPtr.Zero, ENUM_CURRENT_SETTINGS, ref dm) != 0)
                 {
                     int refreshRate = dm.dmDisplayFrequency;
                     if (refreshRate >= 30 && refreshRate <= 360) // Reasonable range for monitor refresh rates
@@ -110,7 +110,7 @@ namespace nyxWM
 
         /// <summary>
         /// Gets the center point of the primary monitor.
-        /// </summary>
+        /// </>
         public static Point GetPrimaryMonitorCenter()
         {
             Rectangle bounds = GetPrimaryMonitorBounds();
