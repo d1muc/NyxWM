@@ -388,11 +388,10 @@ namespace nyxWM
                 initialWindowPositions[kvp.Key] = kvp.Value;
             }
 
-            // Reset current offsets and set target to move to center
-            currentDx = 0;
-            currentDy = 0;
-            targetDx = deltaX;
-            targetDy = deltaY;
+            // Apply delta to current offset to center the group
+            targetDx = currentDx + deltaX;
+            targetDy = currentDy + deltaY;
+            // currentDx and currentDy remain unchanged (they will lerp towards target)
         }
 
         /// <summary>
