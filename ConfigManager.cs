@@ -90,7 +90,7 @@ namespace nyxWM
                 LerpRatePerSecond = 8.0f,
                 AutoCenterOnFocusDefault = true,
                 PauseOnFullscreen = true,
-                IgnoredWindowClassNames = new[] { "Shell_TrayWnd", "Progman", "WorkerW" },
+                IgnoredWindowClassNames = new[] { "Shell_TrayWnd", "Progman", "WorkerW", "CEF-OSC-WIDGET", "NvOverlayWindow" },
                 Hotkeys = new HotkeySettings
                 {
                     ResetCamera = new Hotkey { Modifiers = "CONTROL", Key = "R" },
