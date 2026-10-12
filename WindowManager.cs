@@ -40,31 +40,26 @@ namespace nyxWM
         // Lerp tuning - how quickly we catch up to target (per second)
         private readonly float _lerpRatePerSecond;
 
-        // Pause on fullscreen flag
-        private bool _isPaused = false;
-
         // Auto-center on focus flag
         public bool AutoCenterOnFocus { get; set; }
-
-        /// <summary>
-        /// Toggles the auto-center-on-focus feature.
-        /// </summary>
-        public void ToggleAutoCenter()
-        {
-            AutoCenterOnFocus = !AutoCenterOnFocus;
-            Console.WriteLine($"AutoCenterOnFocus is now: {AutoCenterOnFocus}");
-        }
 
         // WinEvent hook fields
         private WinApi.WinEventProc _winEventProcDelegate;
         private IntPtr _winEventHookHandle;
         private SynchronizationContext? _syncContext;
 
+        // Anti-cheat pause fields
+        private readonly MouseHook _mouseHook;
+        private volatile bool _isPaused;
+
         /// <summary>
         /// Constructor: sets up the WinEvent hook for foreground window changes.
         /// </summary>
-        public WindowManager()
+        public WindowManager(MouseHook mouseHook)
         {
+            _mouseHook = mouseHook ?? throw new ArgumentNullException(nameof(mouseHook));
+            _isPaused = false;
+
             // Ensure a synchronization context exists for the current thread
             if (SynchronizationContext.Current == null)
             {
@@ -113,6 +108,25 @@ namespace nyxWM
             }
         }
 
+
+        /// <summary>
+        /// Gets the executable file path for the process that owns the given window.
+        /// Returns an empty string if the path cannot be determined.
+        /// </summary>
+        private string GetExePathFromWindow(IntPtr hWnd)
+        {
+            WinApi.GetWindowThreadProcessId(hWnd, out uint processId);
+            try
+            {
+                var process = Process.GetProcessById((int)processId);
+                return process.MainModule?.FileName ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
         /// <summary>
         /// Callback for WinEvent hook. Marshals to the UI thread.
         /// </summary>
@@ -134,55 +148,6 @@ namespace nyxWM
         /// <param name="hwnd">The handle of the window that gained focus.</param>
         private void HandleFocusChange(IntPtr hwnd)
         {
-            // Handle pause on fullscreen feature
-            if (ConfigManager.Current.PauseOnFullscreen)
-            {
-                // Get the foreground window rectangle
-                if (WinApi.GetWindowRect(hwnd, out WinApi.RECT windowRect))
-                {
-                    // Get primary screen bounds
-                    Rectangle screenBounds = Screen.PrimaryScreen!.Bounds;
-
-                    // Check if the window covers the entire primary screen (fullscreen)
-                    bool coversFullScreen = (windowRect.Left == screenBounds.Left &&
-                                             windowRect.Top == screenBounds.Top &&
-                                             (windowRect.Right - windowRect.Left) == screenBounds.Width &&
-                                             (windowRect.Bottom - windowRect.Top) == screenBounds.Height);
-                    // If it covers the screen, check window style to see if it's borderless (no caption) or popup
-                    bool isFullscreen = false;
-                    if (coversFullScreen)
-                    {
-                        int style = WinApi.GetWindowLong(hwnd, WinApi.GWL_STYLE);
-                        // If window lacks a caption, treat as fullscreen for pause (typical for borderless games)
-                        if ((style & WinApi.WS_CAPTION) == 0)
-                        {
-                            isFullscreen = true;
-                        }
-                    }
-
-                    // Get the process ID of the foreground window
-                    uint processId;
-                    WinApi.GetWindowThreadProcessId(hwnd, out processId);
-
-                    // Get current process ID for comparison
-                    int currentProcessId = Process.GetCurrentProcess().Id;
-
-                    // Pause if: window is fullscreen AND it's not our own process
-                    if (isFullscreen && processId != currentProcessId)
-                    {
-                        _isPaused = true;
-                    }
-                    else
-                    {
-                        _isPaused = false;
-                    }
-                }
-            }
-            else
-            {
-                _isPaused = false;
-            }
-
             // Debug output
             int debugTitleLen = WinApi.GetWindowTextLength(hwnd);
             if (debugTitleLen > 0)
@@ -221,8 +186,74 @@ namespace nyxWM
                 return;
             }
 
-            // Update initialWindowPositions with base positions of all visible windows.
-            // Base position = current position - target offset
+            // NEW: Pause on fullscreen logic for anti-cheat
+            if (ConfigManager.Current.PauseOnFullscreen)
+            {
+                // Get the executable path
+                string exePath = GetExePathFromWindow(hwnd);
+                // Exclude our own process
+                uint currentProcessId = (uint)Environment.ProcessId;
+                WinApi.GetWindowThreadProcessId(hwnd, out uint windowProcessId);
+                if (windowProcessId == currentProcessId)
+                {
+                    // Skip pause for our own process
+                }
+                else
+                {
+                    // Check if window is large and borderless
+                    Rectangle screenBounds = Screen.PrimaryScreen!.Bounds;
+                    if (WinApi.GetWindowRect(hwnd, out WinApi.RECT windowRect))
+                    {
+                        // Check if window covers >= 90% of screen area
+                        int screenArea = screenBounds.Width * screenBounds.Height;
+                        int windowArea = (windowRect.Right - windowRect.Left) * (windowRect.Bottom - windowRect.Top);
+                        bool largeWindow = screenArea > 0 && ((float)windowArea / screenArea) >= 0.90f;
+
+                        // Check for borderless: no title bar (WS_CAPTION == 0)
+                        int style = WinApi.GetWindowLong(hwnd, WinApi.GWL_STYLE);
+                        bool hasCaption = (style & WinApi.WS_CAPTION) != 0;
+
+                        int gameScore = GameCacheManager.ComputeGameScore(hwnd, exePath);
+
+                        bool shouldPause = (largeWindow && !hasCaption) || gameScore > 40;
+
+                        if (shouldPause)
+                        {
+                            // Activate pause
+                            if (!_isPaused)
+                            {
+                                _isPaused = true;
+                                _mouseHook?.Stop();
+                                // Automatically cache the game for future detection
+                                if (!string.IsNullOrEmpty(exePath))
+                                {
+                                    GameCacheManager.AddKnownGame(exePath);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Deactivate pause if we were paused
+                            if (_isPaused)
+                            {
+                                _isPaused = false;
+                                _mouseHook?.Start();
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Failed to get window rect: ensure unpause
+                        if (_isPaused)
+                        {
+                            _isPaused = false;
+                            _mouseHook?.Start();
+                        }
+                    }
+                }
+            }
+
+            // Update initialWindowPositions with current positions of all visible windows.
             initialWindowPositions.Clear();
             WinApi.EnumWindows((hWnd, lParam) =>
             {
@@ -257,14 +288,8 @@ namespace nyxWM
                     if (rect.Left < -10000 || rect.Top < -10000)
                         return true;
 
-                    // Store base position (current position minus target offset)
-                    initialWindowPositions[hWnd] = new WinApi.RECT
-                    {
-                        Left = rect.Left - (int)Math.Round(targetDx),
-                        Top = rect.Top - (int)Math.Round(targetDy),
-                        Right = rect.Right - (int)Math.Round(targetDx),
-                        Bottom = rect.Bottom - (int)Math.Round(targetDy)
-                    };
+                    // Store current position
+                    initialWindowPositions[hWnd] = rect;
                 }
 
                 return true; // continue enumeration
@@ -287,12 +312,13 @@ namespace nyxWM
             int deltaX = screenCenterX - winCenterX;
             int deltaY = screenCenterY - winCenterY;
 
-            // Accumulate target offset and reset current offset
-            targetDx += deltaX;
-            targetDy += deltaY;
+            // Reset current offsets and set target to move to center
             currentDx = 0;
             currentDy = 0;
+            targetDx = deltaX;
+            targetDy = deltaY;
         }
+
 
         /// <summary>
         /// Checks if a window class name is in the ignored list.
@@ -355,13 +381,14 @@ namespace nyxWM
                 // Get window rectangle
                 if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
                 {
-                    // Store base position (current position minus target offset)
+                    // Store base position (current position minus CURRENT offset)
+                    // At drag start, current offset should be 0 (reset in StartDragging)
                     initialWindowPositions[hWnd] = new WinApi.RECT
                     {
-                        Left = rect.Left - (int)Math.Round(targetDx),
-                        Top = rect.Top - (int)Math.Round(targetDy),
-                        Right = rect.Right - (int)Math.Round(targetDx),
-                        Bottom = rect.Bottom - (int)Math.Round(targetDy)
+                        Left = rect.Left - (int)Math.Round(currentDx),
+                        Top = rect.Top - (int)Math.Round(currentDy),
+                        Right = rect.Right - (int)Math.Round(currentDx),
+                        Bottom = rect.Bottom - (int)Math.Round(currentDy)
                     };
                 }
 
@@ -378,6 +405,15 @@ namespace nyxWM
         public void StopDragging()
         {
             isDragging = false;
+        }
+
+        /// <summary>
+        /// Toggles the auto-center-on-focus feature.
+        /// </>
+        public void ToggleAutoCenter()
+        {
+            AutoCenterOnFocus = !AutoCenterOnFocus;
+            Console.WriteLine($"AutoCenterOnFocus is now: {AutoCenterOnFocus}");
         }
 
         /// <summary>
@@ -460,11 +496,10 @@ namespace nyxWM
             int deltaX = screenCenterX - centerX;
             int deltaY = screenCenterY - centerY;
 
-            // Apply the delta to target offset (accumulate, don't replace)
-            // Reset current offset to restart animation from current position
+            // Set target offset to the needed shift and reset current offset
             // DO NOT modify initialWindowPositions - keep base positions intact
-            targetDx += deltaX;
-            targetDy += deltaY;
+            targetDx = deltaX;
+            targetDy = deltaY;
             currentDx = 0;
             currentDy = 0;
         }
@@ -475,7 +510,7 @@ namespace nyxWM
         /// <param name="deltaTime">Time elapsed since last update in milliseconds</param>
         public void UpdatePosition(float deltaTime)
         {
-            // If paused due to fullscreen application, skip all processing
+            // If paused, skip updating window positions to avoid interfering with games
             if (_isPaused)
                 return;
 

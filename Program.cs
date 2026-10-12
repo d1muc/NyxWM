@@ -24,9 +24,9 @@ namespace nyxWM
         [STAThread]
         static void Main(string[] args)
         {
-            // Initialize window manager and mouse hook
-            var windowManager = new WindowManager();
+            // Initialize mouse hook and window manager
             var mouseHook = new MouseHook();
+            var windowManager = new WindowManager(mouseHook);
 
             // Get monitor refresh rate for timer setup
             int fallbackRefreshRate = ConfigManager.Current.FallbackRefreshRate;
