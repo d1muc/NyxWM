@@ -489,11 +489,9 @@ namespace nyxWM
             int deltaX = screenCenterX - winCenterX;
             int deltaY = screenCenterY - winCenterY;
 
-            // Reset current offsets and set target to move to center
-            currentDx = 0;
-            currentDy = 0;
-            targetDx = deltaX;
-            targetDy = deltaY;
+            // Set target to current offset plus the delta needed to center
+            targetDx = currentDx + deltaX;
+            targetDy = currentDy + deltaY;
         }
 
         /// <summary>
