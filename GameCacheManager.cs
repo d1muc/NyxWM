@@ -14,11 +14,16 @@ namespace nyxWM
     public static class GameCacheManager
     {
         private const string CacheFileName = "gamecache.json";
+        private const string BlacklistFileName = "blacklist.json";
         private static readonly string CacheDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache");
         private static readonly string CacheFilePath = Path.Combine(CacheDirectory, CacheFileName);
+        private static readonly string BlacklistFilePath = Path.Combine(CacheDirectory, BlacklistFileName);
 
         // Thread-safe store of known game executable paths (lowercase for case-insensitive comparison)
         private static readonly ConcurrentDictionary<string, bool> _knownGames = new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        // Thread-safe store of blacklisted executable names (without path, lowercased for case-insensitive comparison)
+        private static readonly ConcurrentDictionary<string, bool> _blacklistedExes = new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
         // Lock for file operations to prevent concurrent reads/writes
         private static readonly SemaphoreSlim _fileLock = new SemaphoreSlim(1, 1);
@@ -33,6 +38,9 @@ namespace nyxWM
 
             // Load cache from file
             LoadCache();
+
+            // Load blacklist from file
+            LoadBlacklist();
         }
 
         /// <summary>
@@ -93,12 +101,112 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Loads the blacklist from the JSON file.
+        /// </summary>
+        private static void LoadBlacklist()
+        {
+            try
+            {
+                if (File.Exists(BlacklistFilePath))
+                {
+                    var json = File.ReadAllText(BlacklistFilePath);
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var blacklistData = JsonSerializer.Deserialize<BlacklistData>(json, options);
+                    if (blacklistData != null && blacklistData.Executables != null)
+                    {
+                        foreach (var exe in blacklistData.Executables)
+                        {
+                            if (!string.IsNullOrWhiteSpace(exe))
+                            {
+                                _blacklistedExes[exe.Trim().ToLowerInvariant()] = true;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // If blacklist file doesn't exist, create it with default values
+                    _blacklistedExes["explorer.exe"] = true;
+                    _blacklistedExes["cmd.exe"] = true;
+                    SaveBlacklist();
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log error but continue with empty blacklist
+                Console.WriteLine($"Failed to load blacklist: {ex.Message}");
+                // Ensure we have at least the default blacklist
+                _blacklistedExes["explorer.exe"] = true;
+                _blacklistedExes["cmd.exe"] = true;
+            }
+        }
+
+        /// <summary>
+        /// Saves the blacklist to the JSON file.
+        /// </summary>
+        public static void SaveBlacklist()
+        {
+            try
+            {
+                _fileLock.Wait();
+                try
+                {
+                    var blacklistData = new BlacklistData
+                    {
+                        Executables = new System.Collections.Generic.List<string>(_blacklistedExes.Keys)
+                    };
+                    var options = new JsonSerializerOptions { WriteIndented = true };
+                    var json = JsonSerializer.Serialize(blacklistData, options);
+                    File.WriteAllText(BlacklistFilePath, json);
+                }
+                finally
+                {
+                    _fileLock.Release();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to save blacklist: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Checks if the executable (by file name) is in the blacklist.
+        /// </summary>
+        /// <param name="exePath">Full path to the executable.</param>
+        /// <returns>True if the executable is blacklisted.</returns>
+        public static bool IsBlacklisted(string exePath)
+        {
+            if (string.IsNullOrWhiteSpace(exePath))
+                return false;
+
+            try
+            {
+                string fileName = Path.GetFileName(exePath);
+                if (string.IsNullOrWhiteSpace(fileName))
+                    return false;
+
+                string lowerFileName = fileName.ToLowerInvariant();
+                return _blacklistedExes.ContainsKey(lowerFileName);
+            }
+            catch
+            {
+                // In case of any error (e.g., invalid path), assume not blacklisted
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Adds an executable path to the cache.
         /// </summary>
         /// <param name="exePath">Full path to the executable (case-insensitive).</param>
         public static void AddKnownGame(string exePath)
         {
             if (string.IsNullOrWhiteSpace(exePath))
+                return;
+
+            // Do not add blacklisted executables to the cache
+            if (IsBlacklisted(exePath))
                 return;
 
             var normalizedPath = exePath.Trim();
@@ -128,6 +236,10 @@ namespace nyxWM
         /// <returns>Score from 0 to 100, higher indicates higher likelihood of being a game.</returns>
         public static int ComputeGameScore(IntPtr hWnd, string exePath)
         {
+            // Return 0 immediately for blacklisted executables
+            if (IsBlacklisted(exePath))
+                return 0;
+
             int score = 0;
 
             // 1. Check executable path cache (if known game, high score)
@@ -199,6 +311,11 @@ namespace nyxWM
         private class CacheData
         {
             public System.Collections.Generic.List<string> KnownGames { get; set; } = new System.Collections.Generic.List<string>();
+        }
+
+        private class BlacklistData
+        {
+            public System.Collections.Generic.List<string> Executables { get; set; } = new System.Collections.Generic.List<string>();
         }
     }
 }
