@@ -130,7 +130,8 @@ namespace nyxWM
                 {
                     ResetCamera = "mainmod + space",
                     ToggleAutoCenter = "mainmod + t",
-                    CloseWindow = "mainmod + c"
+                    CloseWindow = "mainmod + c",
+                    CenterActiveWindow = "mainmod + f"
                 }
             };
         }
@@ -177,7 +178,9 @@ namespace nyxWM
                 settings.Hotkeys = new HotkeySettings
                 {
                     ResetCamera = "mainmod + space",
-                    ToggleAutoCenter = "mainmod + t"
+                    ToggleAutoCenter = "mainmod + t",
+                    CloseWindow = "mainmod + c",
+                    CenterActiveWindow = "mainmod + f"
                 };
                 changed = true;
             }
@@ -203,6 +206,13 @@ namespace nyxWM
                 {
                     Console.WriteLine($"Invalid closeWindow hotkey: {settings.Hotkeys.CloseWindow}. Using default.");
                     settings.Hotkeys.CloseWindow = "mainmod + c";
+                    changed = true;
+                }
+
+                if (!IsValidHotkeyString(settings.Hotkeys.CenterActiveWindow, settings.MainMod))
+                {
+                    Console.WriteLine($"Invalid centerActiveWindow hotkey: {settings.Hotkeys.CenterActiveWindow}. Using default.");
+                    settings.Hotkeys.CenterActiveWindow = "mainmod + f";
                     changed = true;
                 }
             }
@@ -231,7 +241,7 @@ namespace nyxWM
                 return false;
 
             // The last part should be the key, the rest are modifiers.
-            string keyPart = parts[parts.Length - 1].Trim();
+            string keyPart = parts[parts.Length - 1].Trim().ToUpperInvariant();
             if (string.IsNullOrEmpty(keyPart))
                 return false;
 
@@ -366,5 +376,10 @@ namespace nyxWM
         /// Hotkey for closing the active window.
         /// </summary>
         public string CloseWindow { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Hotkey for centering the active window.
+        /// </summary>
+        public string CenterActiveWindow { get; set; } = string.Empty;
     }
 }

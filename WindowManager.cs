@@ -442,6 +442,18 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Centers the active window on the screen smoothly via Lerp ticker, mimicking automatic focus centering.
+        /// </summary>
+        public void CenterActiveWindow()
+        {
+            IntPtr hWnd = WinApi.GetForegroundWindow();
+            if (hWnd == IntPtr.Zero)
+                return;
+
+            HandleFocusChange(hWnd);
+        }
+
+        /// <summary>
         /// Called on each timer tick: updates window positions based on mouse movement with Lerp smoothing.
         /// </summary>
         /// <param name="deltaTime">Time elapsed since last update in milliseconds</param>

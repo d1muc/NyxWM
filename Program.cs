@@ -13,6 +13,7 @@ namespace nyxWM
         private const int VK_R = 0x52;
         private const int VK_T = 0x54;
         internal const int HOTKEY_ID_CLOSE_WINDOW = 0x0003;
+        internal const int HOTKEY_ID_CENTER_WINDOW = 0x0004;
         internal const int WM_HOTKEY = 0x0312;
 
         // Hotkey functions
@@ -68,6 +69,7 @@ namespace nyxWM
                 UnregisterHotKey(IntPtr.Zero, 0x0000); // Unregister reset camera hotkey
                 UnregisterHotKey(IntPtr.Zero, 0x0001); // Unregister toggle auto-center hotkey
                 UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_CLOSE_WINDOW); // Unregister close window hotkey
+                UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_CENTER_WINDOW); // Unregister center active window hotkey
                 renderTimer.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -122,6 +124,19 @@ namespace nyxWM
             if (!RegisterHotKey(IntPtr.Zero, HOTKEY_ID_CLOSE_WINDOW, closeWindowModifiers, closeWindowKey))
             {
                 Console.WriteLine("Failed to register close window hotkey.");
+            }
+
+            // Center active window hotkey
+            uint centerWindowModifiers;
+            uint centerWindowKey;
+            if (!ParseHotkeyString(config.Hotkeys.CenterActiveWindow, mainmod, out centerWindowModifiers, out centerWindowKey))
+            {
+                Console.WriteLine("Invalid center active window hotkey in config. Using default.");
+                ParseHotkeyString("mainmod + f", mainmod, out centerWindowModifiers, out centerWindowKey);
+            }
+            if (!RegisterHotKey(IntPtr.Zero, HOTKEY_ID_CENTER_WINDOW, centerWindowModifiers, centerWindowKey))
+            {
+                Console.WriteLine("Failed to register center active window hotkey.");
             }
         }
 
@@ -274,6 +289,11 @@ namespace nyxWM
                 else if (wParam == Program.HOTKEY_ID_CLOSE_WINDOW) // Close window
                 {
                     _windowManager.CloseActiveWindow();
+                    return true; // Message handled
+                }
+                else if (wParam == Program.HOTKEY_ID_CENTER_WINDOW) // Center active window
+                {
+                    _windowManager.CenterActiveWindow();
                     return true; // Message handled
                 }
             }
