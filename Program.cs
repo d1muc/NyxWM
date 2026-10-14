@@ -80,18 +80,30 @@ namespace nyxWM
         private static void RegisterConfiguredHotkeys()
         {
             var config = ConfigManager.Current;
+            string mainmod = config.MainMod;
 
             // Reset camera hotkey
-            uint resetCameraModifiers = ParseModifierString(config.Hotkeys.ResetCamera.Modifiers);
-            uint resetCameraKey = ParseKeyString(config.Hotkeys.ResetCamera.Key);
+            uint resetCameraModifiers;
+            uint resetCameraKey;
+            if (!ParseHotkeyString(config.Hotkeys.ResetCamera, mainmod, out resetCameraModifiers, out resetCameraKey))
+            {
+                Console.WriteLine("Invalid reset camera hotkey in config. Using default.");
+                // Fallback to default: mainmod + space, but we know mainmod is valid from config validation
+                ParseHotkeyString("mainmod + space", mainmod, out resetCameraModifiers, out resetCameraKey);
+            }
             if (!RegisterHotKey(IntPtr.Zero, 0x0000, resetCameraModifiers, resetCameraKey))
             {
                 Console.WriteLine("Failed to register reset camera hotkey.");
             }
 
             // Toggle auto-center hotkey
-            uint toggleModifiers = ParseModifierString(config.Hotkeys.ToggleAutoCenter.Modifiers);
-            uint toggleKey = ParseKeyString(config.Hotkeys.ToggleAutoCenter.Key);
+            uint toggleModifiers;
+            uint toggleKey;
+            if (!ParseHotkeyString(config.Hotkeys.ToggleAutoCenter, mainmod, out toggleModifiers, out toggleKey))
+            {
+                Console.WriteLine("Invalid toggle auto-center hotkey in config. Using default.");
+                ParseHotkeyString("mainmod + t", mainmod, out toggleModifiers, out toggleKey);
+            }
             if (!RegisterHotKey(IntPtr.Zero, 0x0001, toggleModifiers, toggleKey))
             {
                 Console.WriteLine("Failed to register toggle auto-center hotkey.");
@@ -99,37 +111,65 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Parses a hotkey string (e.g., "mainmod + space") into modifier flags and virtual key code.
+        /// Replaces "mainmod" with the provided mainmod string.
+        /// Returns true if successful, false otherwise.
+        /// </summary>
+        private static bool ParseHotkeyString(string hotkeyString, string mainmod, out uint modifiers, out uint key)
+        {
+            modifiers = 0;
+            key = 0;
+
+            if (string.IsNullOrWhiteSpace(hotkeyString))
+                return false;
+
+            // Replace mainmod placeholder (case-insensitive)
+            string replaced = hotkeyString.Replace("mainmod", mainmod, StringComparison.InvariantCultureIgnoreCase);
+            // Split by '+'
+            string[] parts = replaced.Split('+', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0)
+                return false;
+
+            // The last part is the key, the rest are modifiers.
+            string keyPart = parts[parts.Length - 1].Trim();
+            if (string.IsNullOrEmpty(keyPart))
+                return false;
+
+            // Parse modifier parts
+            for (int i = 0; i < parts.Length - 1; i++)
+            {
+                string modifier = parts[i].Trim().ToUpperInvariant();
+                uint modFlag = ParseModifierString(modifier);
+                if (modFlag == 0)
+                    return false; // Invalid modifier
+                modifiers |= modFlag;
+            }
+
+            // Parse key part
+            key = ParseKeyString(keyPart);
+            if (key == 0)
+                return false; // Invalid key
+
+            return true;
+        }
+
+        /// <summary>
         /// Converts a modifier string (e.g., "CONTROL+SHIFT") to the corresponding modifier flags.
+        /// Note: This method expects a single modifier (no '+') and is used by ParseHotkeyString for each modifier part.
         /// </summary>
         private static uint ParseModifierString(string modifierString)
         {
-            uint result = 0;
-            string[] parts = modifierString.Split('+', StringSplitOptions.RemoveEmptyEntries);
-            foreach (string part in parts)
+            // This method now expects a single modifier (like "CONTROL") and returns the flag.
+            // We keep the same logic as before but for a single part.
+            string trimmed = modifierString.Trim().ToUpperInvariant();
+            return trimmed switch
             {
-                string trimmed = part.Trim().ToUpperInvariant();
-                switch (trimmed)
-                {
-                    case "CONTROL":
-                        result |= 0x0002; // MOD_CONTROL
-                        break;
-                    case "ALT":
-                        result |= 0x0001; // MOD_ALT
-                        break;
-                    case "SHIFT":
-                        result |= 0x0004; // MOD_SHIFT
-                        break;
-                    case "WIN":
-                    case "LWIN":
-                    case "RWIN":
-                        result |= 0x0008; // MOD_WIN
-                        break;
-                    default:
-                        Console.WriteLine($"Unknown modifier part: {trimmed}");
-                        break;
-                }
-            }
-            return result;
+                "CONTROL" => 0x0002, // MOD_CONTROL
+                "ALT" => 0x0001, // MOD_ALT
+                "SHIFT" => 0x0004, // MOD_SHIFT
+                "WIN" or "LWIN" or "RWIN" => 0x0008, // MOD_WIN
+                _ => 0 // Unknown modifier
+            };
         }
 
         /// <summary>
@@ -153,39 +193,37 @@ namespace nyxWM
             }
 
             // Handle special keys
-            switch (key)
+            return key switch
             {
-                case "F1": return 0x70;
-                case "F2": return 0x71;
-                case "F3": return 0x72;
-                case "F4": return 0x73;
-                case "F5": return 0x74;
-                case "F6": return 0x75;
-                case "F7": return 0x76;
-                case "F8": return 0x77;
-                case "F9": return 0x78;
-                case "F10": return 0x79;
-                case "F11": return 0x7A;
-                case "F12": return 0x7B;
-                case "LEFT": return 0x25;
-                case "UP": return 0x26;
-                case "RIGHT": return 0x27;
-                case "DOWN": return 0x28;
-                case "ENTER": return 0x0D;
-                case "ESC": return 0x1B;
-                case "SPACE": return 0x20;
-                case "TAB": return 0x09;
-                case "BACKSPACE": return 0x08;
-                case "DELETE": return 0x2E;
-                case "INSERT": return 0x2D;
-                case "HOME": return 0x24;
-                case "END": return 0x23;
-                case "PAGEUP": return 0x21;
-                case "PAGEDOWN": return 0x22;
-                default:
-                    Console.WriteLine($"Unknown key: {keyString}. Using 0.");
-                    return 0;
-            }
+                "F1" => 0x70,
+                "F2" => 0x71,
+                "F3" => 0x72,
+                "F4" => 0x73,
+                "F5" => 0x74,
+                "F6" => 0x75,
+                "F7" => 0x76,
+                "F8" => 0x77,
+                "F9" => 0x78,
+                "F10" => 0x79,
+                "F11" => 0x7A,
+                "F12" => 0x7B,
+                "LEFT" => 0x25,
+                "UP" => 0x26,
+                "RIGHT" => 0x27,
+                "DOWN" => 0x28,
+                "ENTER" => 0x0D,
+                "ESC" => 0x1B,
+                "SPACE" => 0x20,
+                "TAB" => 0x09,
+                "BACKSPACE" => 0x08,
+                "DELETE" => 0x2E,
+                "INSERT" => 0x2D,
+                "HOME" => 0x24,
+                "END" => 0x23,
+                "PAGEUP" => 0x21,
+                "PAGEDOWN" => 0x22,
+                _ => 0 // Unknown key
+            };
         }
     }
 
