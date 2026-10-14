@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text.Json;
+using System.Text.Encodings.Web;
 
 namespace nyxWM
 {
@@ -100,7 +101,8 @@ namespace nyxWM
             {
                 var options = new JsonSerializerOptions
                 {
-                    WriteIndented = true
+                    WriteIndented = true,
+                    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                 };
                 string json = JsonSerializer.Serialize(settings, options);
                 File.WriteAllText(ConfigFilePath, json);
