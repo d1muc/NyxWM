@@ -288,6 +288,12 @@ namespace nyxWM
         {
             if (m.Msg == Program.WM_HOTKEY)
             {
+                // Ignore all hotkeys when paused (game mode)
+                if (_windowManager.IsPaused)
+                {
+                    return true; // Message handled (do nothing)
+                }
+
                 int wParam = m.WParam.ToInt32();
                 // Note: We don't have the actual modifier and key values here, but we can compare wParam to our registered IDs.
                 // We registered two hotkeys with IDs 0x0000 and 0x0001.

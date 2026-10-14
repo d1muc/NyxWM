@@ -43,6 +43,11 @@ namespace nyxWM
         // Auto-center on focus flag
         public bool AutoCenterOnFocus { get; set; }
 
+        /// <summary>
+        /// Gets whether the window manager is paused (game mode).
+        /// </summary>
+        public bool IsPaused => _isPaused;
+
         // WinEvent hook fields
         private WinApi.WinEventProc _winEventProcDelegate;
         private IntPtr _winEventHookHandle;
@@ -417,22 +422,20 @@ namespace nyxWM
         }
 
         /// <summary>
-        /// Toggles the game mode (pause) state for anti-cheat purposes.
+        /// Activates the game mode (pause) state for anti-cheat purposes.
         /// This works independently of the automatic fullscreen detection.
+        /// Note: despite the name, this method only activates the pause and does not toggle.
+        /// To deactivate, rely on automatic focus change handling.
         /// </summary>
         public void ToggleGameMode()
         {
-            _isPaused = !_isPaused;
-            if (_isPaused)
+            if (!_isPaused)
             {
+                _isPaused = true;
                 _mouseHook.Stop();
                 Console.WriteLine("Game mode activated (paused).");
             }
-            else
-            {
-                _mouseHook.Start();
-                Console.WriteLine("Game mode deactivated (unpaused).");
-            }
+            // If already paused, do nothing.
         }
 
         /// <summary>
@@ -469,7 +472,28 @@ namespace nyxWM
             if (hWnd == IntPtr.Zero)
                 return;
 
-            HandleFocusChange(hWnd);
+            // Get the rectangle of the focused window
+            if (!WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
+                return;
+
+            // Calculate the center of the focused window
+            int winCenterX = (rect.Left + rect.Right) / 2;
+            int winCenterY = (rect.Top + rect.Bottom) / 2;
+
+            // Get the center of the primary screen
+            Rectangle primaryScreenBounds = Screen.PrimaryScreen!.Bounds;
+            int screenCenterX = primaryScreenBounds.X + primaryScreenBounds.Width / 2;
+            int screenCenterY = primaryScreenBounds.Y + primaryScreenBounds.Height / 2;
+
+            // Calculate delta to center the window on the screen
+            int deltaX = screenCenterX - winCenterX;
+            int deltaY = screenCenterY - winCenterY;
+
+            // Reset current offsets and set target to move to center
+            currentDx = 0;
+            currentDy = 0;
+            targetDx = deltaX;
+            targetDy = deltaY;
         }
 
         /// <summary>
