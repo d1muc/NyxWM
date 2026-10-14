@@ -429,6 +429,19 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Closes the active (foreground) window by sending a WM_CLOSE message.
+        /// </summary>
+        public void CloseActiveWindow()
+        {
+            IntPtr foregroundWnd = WinApi.GetForegroundWindow();
+            if (foregroundWnd != IntPtr.Zero)
+            {
+                // Send WM_CLOSE message (0x0010)
+                WinApi.SendMessage(foregroundWnd, 0x0010, IntPtr.Zero, IntPtr.Zero);
+            }
+        }
+
+        /// <summary>
         /// Called on each timer tick: updates window positions based on mouse movement with Lerp smoothing.
         /// </summary>
         /// <param name="deltaTime">Time elapsed since last update in milliseconds</param>

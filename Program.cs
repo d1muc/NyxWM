@@ -12,6 +12,7 @@ namespace nyxWM
         private const int MOD_CONTROL = 0x0002;
         private const int VK_R = 0x52;
         private const int VK_T = 0x54;
+        internal const int HOTKEY_ID_CLOSE_WINDOW = 0x0003;
         internal const int WM_HOTKEY = 0x0312;
 
         // Hotkey functions
@@ -66,6 +67,7 @@ namespace nyxWM
                 mouseHook.Stop();
                 UnregisterHotKey(IntPtr.Zero, 0x0000); // Unregister reset camera hotkey
                 UnregisterHotKey(IntPtr.Zero, 0x0001); // Unregister toggle auto-center hotkey
+                UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_CLOSE_WINDOW); // Unregister close window hotkey
                 renderTimer.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -107,6 +109,19 @@ namespace nyxWM
             if (!RegisterHotKey(IntPtr.Zero, 0x0001, toggleModifiers, toggleKey))
             {
                 Console.WriteLine("Failed to register toggle auto-center hotkey.");
+            }
+
+            // Close window hotkey
+            uint closeWindowModifiers;
+            uint closeWindowKey;
+            if (!ParseHotkeyString(config.Hotkeys.CloseWindow, mainmod, out closeWindowModifiers, out closeWindowKey))
+            {
+                Console.WriteLine("Invalid close window hotkey in config. Using default.");
+                ParseHotkeyString("mainmod + c", mainmod, out closeWindowModifiers, out closeWindowKey);
+            }
+            if (!RegisterHotKey(IntPtr.Zero, HOTKEY_ID_CLOSE_WINDOW, closeWindowModifiers, closeWindowKey))
+            {
+                Console.WriteLine("Failed to register close window hotkey.");
             }
         }
 
@@ -254,6 +269,11 @@ namespace nyxWM
                 else if (wParam == 0x0001) // Toggle auto-center-on-focus
                 {
                     _windowManager.ToggleAutoCenter();
+                    return true; // Message handled
+                }
+                else if (wParam == Program.HOTKEY_ID_CLOSE_WINDOW) // Close window
+                {
+                    _windowManager.CloseActiveWindow();
                     return true; // Message handled
                 }
             }

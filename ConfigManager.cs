@@ -129,7 +129,8 @@ namespace nyxWM
                 Hotkeys = new HotkeySettings
                 {
                     ResetCamera = "mainmod + space",
-                    ToggleAutoCenter = "mainmod + t"
+                    ToggleAutoCenter = "mainmod + t",
+                    CloseWindow = "mainmod + c"
                 }
             };
         }
@@ -195,6 +196,13 @@ namespace nyxWM
                 {
                     Console.WriteLine($"Invalid toggleAutoCenter hotkey: {settings.Hotkeys.ToggleAutoCenter}. Using default.");
                     settings.Hotkeys.ToggleAutoCenter = "mainmod + t";
+                    changed = true;
+                }
+
+                if (!IsValidHotkeyString(settings.Hotkeys.CloseWindow, settings.MainMod))
+                {
+                    Console.WriteLine($"Invalid closeWindow hotkey: {settings.Hotkeys.CloseWindow}. Using default.");
+                    settings.Hotkeys.CloseWindow = "mainmod + c";
                     changed = true;
                 }
             }
@@ -353,5 +361,10 @@ namespace nyxWM
         /// Hotkey for toggling auto-center-on-focus.
         /// </summary>
         public string ToggleAutoCenter { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Hotkey for closing the active window.
+        /// </summary>
+        public string CloseWindow { get; set; } = string.Empty;
     }
 }
