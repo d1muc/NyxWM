@@ -417,6 +417,25 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Toggles the game mode (pause) state for anti-cheat purposes.
+        /// This works independently of the automatic fullscreen detection.
+        /// </summary>
+        public void ToggleGameMode()
+        {
+            _isPaused = !_isPaused;
+            if (_isPaused)
+            {
+                _mouseHook.Stop();
+                Console.WriteLine("Game mode activated (paused).");
+            }
+            else
+            {
+                _mouseHook.Start();
+                Console.WriteLine("Game mode deactivated (unpaused).");
+            }
+        }
+
+        /// <summary>
         /// Resets the camera to the canvas origin (0,0) offset.
         /// Sets the target offset to zero, allowing the current offset to smoothly
         /// chase zero via existing Lerp smoothing in UpdatePosition.

@@ -14,6 +14,7 @@ namespace nyxWM
         private const int VK_T = 0x54;
         internal const int HOTKEY_ID_CLOSE_WINDOW = 0x0003;
         internal const int HOTKEY_ID_CENTER_WINDOW = 0x0004;
+        internal const int HOTKEY_ID_GAME_MODE = 0x0005;
         internal const int WM_HOTKEY = 0x0312;
 
         // Hotkey functions
@@ -70,6 +71,7 @@ namespace nyxWM
                 UnregisterHotKey(IntPtr.Zero, 0x0001); // Unregister toggle auto-center hotkey
                 UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_CLOSE_WINDOW); // Unregister close window hotkey
                 UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_CENTER_WINDOW); // Unregister center active window hotkey
+                UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_GAME_MODE); // Unregister toggle game mode hotkey
                 renderTimer.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -137,6 +139,19 @@ namespace nyxWM
             if (!RegisterHotKey(IntPtr.Zero, HOTKEY_ID_CENTER_WINDOW, centerWindowModifiers, centerWindowKey))
             {
                 Console.WriteLine("Failed to register center active window hotkey.");
+            }
+
+            // Toggle game mode hotkey
+            uint gameModeModifiers;
+            uint gameModeKey;
+            if (!ParseHotkeyString(config.Hotkeys.ToggleGameMode, mainmod, out gameModeModifiers, out gameModeKey))
+            {
+                Console.WriteLine("Invalid toggle game mode hotkey in config. Using default.");
+                ParseHotkeyString("mainmod + g", mainmod, out gameModeModifiers, out gameModeKey);
+            }
+            if (!RegisterHotKey(IntPtr.Zero, HOTKEY_ID_GAME_MODE, gameModeModifiers, gameModeKey))
+            {
+                Console.WriteLine("Failed to register toggle game mode hotkey.");
             }
         }
 
@@ -294,6 +309,11 @@ namespace nyxWM
                 else if (wParam == Program.HOTKEY_ID_CENTER_WINDOW) // Center active window
                 {
                     _windowManager.CenterActiveWindow();
+                    return true; // Message handled
+                }
+                else if (wParam == Program.HOTKEY_ID_GAME_MODE) // Toggle game mode
+                {
+                    _windowManager.ToggleGameMode();
                     return true; // Message handled
                 }
             }

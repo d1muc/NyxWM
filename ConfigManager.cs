@@ -131,7 +131,8 @@ namespace nyxWM
                     ResetCamera = "mainmod + space",
                     ToggleAutoCenter = "mainmod + t",
                     CloseWindow = "mainmod + c",
-                    CenterActiveWindow = "mainmod + f"
+                    CenterActiveWindow = "mainmod + f",
+                    ToggleGameMode = "mainmod + g"
                 }
             };
         }
@@ -213,6 +214,13 @@ namespace nyxWM
                 {
                     Console.WriteLine($"Invalid centerActiveWindow hotkey: {settings.Hotkeys.CenterActiveWindow}. Using default.");
                     settings.Hotkeys.CenterActiveWindow = "mainmod + f";
+                    changed = true;
+                }
+
+                if (!IsValidHotkeyString(settings.Hotkeys.ToggleGameMode, settings.MainMod))
+                {
+                    Console.WriteLine($"Invalid toggleGameMode hotkey: {settings.Hotkeys.ToggleGameMode}. Using default.");
+                    settings.Hotkeys.ToggleGameMode = "mainmod + g";
                     changed = true;
                 }
             }
@@ -381,5 +389,10 @@ namespace nyxWM
         /// Hotkey for centering the active window.
         /// </summary>
         public string CenterActiveWindow { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Hotkey for toggling game mode (pause) for anti-cheat purposes.
+        /// </summary>
+        public string ToggleGameMode { get; set; } = string.Empty;
     }
 }
