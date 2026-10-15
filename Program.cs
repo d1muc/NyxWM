@@ -36,11 +36,64 @@ namespace nyxWM
             int refreshRate = MonitorUtils.GetPrimaryMonitorRefreshRate(fallbackRefreshRate);
             int intervalMs = Math.Max(1, (int)(1000.0 / refreshRate)); // Calculate interval for target refresh rate
 
+            // Declare renderTimer as nullable to be assigned later
+            HighResolutionTimer? renderTimer = null;
+
+            // Set up system tray icon
+            var notifyIcon = new NotifyIcon
+            {
+                Icon = SystemIcons.Application,
+                Visible = true
+            };
+            var contextMenu = new ContextMenuStrip();
+            var statusItem = new ToolStripMenuItem
+            {
+                Text = "Status: Running"
+            };
+            var toggleGameModeItem = new ToolStripMenuItem
+            {
+                Text = "Toggle Game Mode"
+            };
+            var exitItem = new ToolStripMenuItem
+            {
+                Text = "Exit"
+            };
+            contextMenu.Items.AddRange(new ToolStripItem[] { statusItem, toggleGameModeItem, exitItem });
+            notifyIcon.ContextMenuStrip = contextMenu;
+
+            // Event handlers for menu items
+            statusItem.Click += (sender, e) =>
+            {
+                // Toggle pause state and update status text
+                bool newState = !windowManager.IsPaused;
+                windowManager.SetPause(newState);
+                statusItem.Text = newState ? "Status: Paused" : "Status: Running";
+            };
+            toggleGameModeItem.Click += (sender, e) =>
+            {
+                windowManager.ToggleGameMode();
+                // Update status text to reflect game mode state
+                statusItem.Text = windowManager.IsPaused ? "Status: Paused" : "Status: Running";
+            };
+            exitItem.Click += (sender, e) =>
+            {
+                // Clean up and exit
+                notifyIcon.Visible = false;
+                mouseHook.Stop();
+                UnregisterHotKey(IntPtr.Zero, 0x0000); // Unregister reset camera hotkey
+                UnregisterHotKey(IntPtr.Zero, 0x0001); // Unregister toggle auto-center hotkey
+                UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_CLOSE_WINDOW); // Unregister close window hotkey
+                UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_CENTER_WINDOW); // Unregister center active window hotkey
+                UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_GAME_MODE); // Unregister toggle game mode hotkey
+                renderTimer?.Dispose(); // Clean up timer
+                Application.Exit(); // Exit the message loop
+            };
+
             Console.WriteLine($"Setting up render timer for {refreshRate} Hz ({intervalMs} ms interval)");
 
             // Set up high-resolution timer for updating window positions
             long lastTimestamp = Stopwatch.GetTimestamp();
-            var renderTimer = new HighResolutionTimer(() =>
+            renderTimer = new HighResolutionTimer(() =>
             {
                 // Calculate delta time
                 long currentTimestamp = Stopwatch.GetTimestamp();
@@ -72,7 +125,7 @@ namespace nyxWM
                 UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_CLOSE_WINDOW); // Unregister close window hotkey
                 UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_CENTER_WINDOW); // Unregister center active window hotkey
                 UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_GAME_MODE); // Unregister toggle game mode hotkey
-                renderTimer.Dispose(); // Clean up timer
+                renderTimer?.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
 

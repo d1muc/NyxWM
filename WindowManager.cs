@@ -451,6 +451,23 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Sets the pause state and manages the mouse hook accordingly.
+        /// </summary>
+        /// <param name="pause">True to pause, false to unpause</param>
+        public void SetPause(bool pause)
+        {
+            _isPaused = pause;
+            if (_isPaused)
+            {
+                _mouseHook?.Stop();
+            }
+            else
+            {
+                _mouseHook?.Start();
+            }
+        }
+
+        /// <summary>
         /// Closes the active (foreground) window by sending a WM_CLOSE message.
         /// </summary>
         public void CloseActiveWindow()
