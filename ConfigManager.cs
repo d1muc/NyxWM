@@ -125,6 +125,7 @@ namespace nyxWM
                 AutoCenterOnFocusDefault = true,
                 PauseOnFullscreen = true,
                 MainMod = "CONTROL+ALT",
+                CameraMoveButton = "MBUTTON",
                 IgnoredWindowClassNames = new[] { "Shell_TrayWnd", "Progman", "WorkerW", "CEF-OSC-WIDGET", "NvOverlayWindow" },
                 Hotkeys = new HotkeySettings
                 {
@@ -221,6 +222,14 @@ namespace nyxWM
                 {
                     Console.WriteLine($"Invalid toggleGameMode hotkey: {settings.Hotkeys.ToggleGameMode}. Using default.");
                     settings.Hotkeys.ToggleGameMode = "mainmod + g";
+                    changed = true;
+                }
+
+                // Validate CameraMoveButton
+                if (!IsValidCameraMoveButtonString(settings.CameraMoveButton, settings.MainMod))
+                {
+                    Console.WriteLine($"Invalid cameraMoveButton: {settings.CameraMoveButton}. Using default MBUTTON.");
+                    settings.CameraMoveButton = "MBUTTON";
                     changed = true;
                 }
             }
@@ -322,6 +331,64 @@ namespace nyxWM
                 _ => false
             };
         }
+
+        /// <summary>
+        /// Checks if a camera move button string is valid after replacing mainmod with the actual mainmod value.
+        /// Supports single keys and combinations with + (e.g., MBUTTON, alt+left, mainmod+middle, ctrl+m).
+        /// </summary>
+        private static bool IsValidCameraMoveButtonString(string cameraMoveButtonString, string mainmod)
+        {
+            if (string.IsNullOrWhiteSpace(cameraMoveButtonString))
+                return false;
+
+            // Replace mainmod placeholder
+            string replaced = cameraMoveButtonString.Replace("mainmod", mainmod, StringComparison.InvariantCultureIgnoreCase);
+            // Split by '+'
+            string[] parts = replaced.Split('+', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0)
+                return false;
+
+            // Validate each part (can be modifier or key)
+            foreach (string part in parts)
+            {
+                string trimmed = part.Trim().ToUpperInvariant();
+                if (string.IsNullOrEmpty(trimmed))
+                    return false;
+
+                // Check if it's a valid modifier
+                if (IsValidModifier(trimmed))
+                    continue;
+
+                // Check if it's a valid key
+                if (IsValidKey(trimmed))
+                    continue;
+
+                // Check for mouse buttons
+                if (IsValidMouseButton(trimmed))
+                    continue;
+
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Checks if a string represents a valid mouse button.
+        /// </summary>
+        private static bool IsValidMouseButton(string button)
+        {
+            return button switch
+            {
+                "LEFT" => true,
+                "RIGHT" => true,
+                "MIDDLE" => true,
+                "MBUTTON" => true,
+                "XBUTTON1" => true,
+                "XBUTTON2" => true,
+                _ => false
+            };
+        }
     }
 
     /// <summary>
@@ -353,6 +420,11 @@ namespace nyxWM
         /// The main modifier string (e.g., "CONTROL+ALT") that is replaced in hotkey strings.
         /// </summary>
         public string MainMod { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The button or key combination used to move the camera (e.g., "MBUTTON", "ALT+LEFT").
+        /// </summary>
+        public string CameraMoveButton { get; set; } = "MBUTTON";
 
         /// <summary>
         /// List of window class names to ignore when tiling/moving windows.

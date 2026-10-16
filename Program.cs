@@ -17,6 +17,9 @@ namespace nyxWM
         internal const int HOTKEY_ID_GAME_MODE = 0x0005;
         internal const int WM_HOTKEY = 0x0312;
 
+        // Track registered hotkey IDs for proper cleanup
+        private static readonly List<int> RegisteredHotkeyIds = new();
+
         // Hotkey functions
         [DllImport("user32.dll")]
         private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -28,7 +31,7 @@ namespace nyxWM
         static void Main(string[] args)
         {
             // Initialize mouse hook and window manager
-            var mouseHook = new MouseHook();
+            var mouseHook = new MouseHook(ConfigManager.Current.CameraMoveButton, ConfigManager.Current.MainMod);
             var windowManager = new WindowManager(mouseHook);
 
             // Get monitor refresh rate for timer setup
@@ -80,11 +83,14 @@ namespace nyxWM
                 // Clean up and exit
                 notifyIcon.Visible = false;
                 mouseHook.Stop();
-                UnregisterHotKey(IntPtr.Zero, 0x0000); // Unregister reset camera hotkey
-                UnregisterHotKey(IntPtr.Zero, 0x0001); // Unregister toggle auto-center hotkey
-                UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_CLOSE_WINDOW); // Unregister close window hotkey
-                UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_CENTER_WINDOW); // Unregister center active window hotkey
-                UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_GAME_MODE); // Unregister toggle game mode hotkey
+
+                // Unregister all registered hotkeys
+                foreach (int hotkeyId in RegisteredHotkeyIds)
+                {
+                    UnregisterHotKey(IntPtr.Zero, hotkeyId);
+                }
+                RegisteredHotkeyIds.Clear();
+
                 renderTimer?.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -120,11 +126,14 @@ namespace nyxWM
             {
                 e.Cancel = true; // Prevent immediate termination
                 mouseHook.Stop();
-                UnregisterHotKey(IntPtr.Zero, 0x0000); // Unregister reset camera hotkey
-                UnregisterHotKey(IntPtr.Zero, 0x0001); // Unregister toggle auto-center hotkey
-                UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_CLOSE_WINDOW); // Unregister close window hotkey
-                UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_CENTER_WINDOW); // Unregister center active window hotkey
-                UnregisterHotKey(IntPtr.Zero, Program.HOTKEY_ID_GAME_MODE); // Unregister toggle game mode hotkey
+
+                // Unregister all registered hotkeys
+                foreach (int hotkeyId in RegisteredHotkeyIds)
+                {
+                    UnregisterHotKey(IntPtr.Zero, hotkeyId);
+                }
+                RegisteredHotkeyIds.Clear();
+
                 renderTimer?.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -138,6 +147,9 @@ namespace nyxWM
         /// </summary>
         private static void RegisterConfiguredHotkeys()
         {
+            // Clear any previously registered IDs
+            RegisteredHotkeyIds.Clear();
+
             var config = ConfigManager.Current;
             string mainmod = config.MainMod;
 
@@ -150,7 +162,11 @@ namespace nyxWM
                 // Fallback to default: mainmod + space, but we know mainmod is valid from config validation
                 ParseHotkeyString("mainmod + space", mainmod, out resetCameraModifiers, out resetCameraKey);
             }
-            if (!RegisterHotKey(IntPtr.Zero, 0x0000, resetCameraModifiers, resetCameraKey))
+            if (RegisterHotKey(IntPtr.Zero, 0x0000, resetCameraModifiers, resetCameraKey))
+            {
+                RegisteredHotkeyIds.Add(0x0000);
+            }
+            else
             {
                 Console.WriteLine("Failed to register reset camera hotkey.");
             }
@@ -163,7 +179,11 @@ namespace nyxWM
                 Console.WriteLine("Invalid toggle auto-center hotkey in config. Using default.");
                 ParseHotkeyString("mainmod + t", mainmod, out toggleModifiers, out toggleKey);
             }
-            if (!RegisterHotKey(IntPtr.Zero, 0x0001, toggleModifiers, toggleKey))
+            if (RegisterHotKey(IntPtr.Zero, 0x0001, toggleModifiers, toggleKey))
+            {
+                RegisteredHotkeyIds.Add(0x0001);
+            }
+            else
             {
                 Console.WriteLine("Failed to register toggle auto-center hotkey.");
             }
@@ -176,7 +196,11 @@ namespace nyxWM
                 Console.WriteLine("Invalid close window hotkey in config. Using default.");
                 ParseHotkeyString("mainmod + c", mainmod, out closeWindowModifiers, out closeWindowKey);
             }
-            if (!RegisterHotKey(IntPtr.Zero, HOTKEY_ID_CLOSE_WINDOW, closeWindowModifiers, closeWindowKey))
+            if (RegisterHotKey(IntPtr.Zero, HOTKEY_ID_CLOSE_WINDOW, closeWindowModifiers, closeWindowKey))
+            {
+                RegisteredHotkeyIds.Add(HOTKEY_ID_CLOSE_WINDOW);
+            }
+            else
             {
                 Console.WriteLine("Failed to register close window hotkey.");
             }
@@ -189,7 +213,11 @@ namespace nyxWM
                 Console.WriteLine("Invalid center active window hotkey in config. Using default.");
                 ParseHotkeyString("mainmod + f", mainmod, out centerWindowModifiers, out centerWindowKey);
             }
-            if (!RegisterHotKey(IntPtr.Zero, HOTKEY_ID_CENTER_WINDOW, centerWindowModifiers, centerWindowKey))
+            if (RegisterHotKey(IntPtr.Zero, HOTKEY_ID_CENTER_WINDOW, centerWindowModifiers, centerWindowKey))
+            {
+                RegisteredHotkeyIds.Add(HOTKEY_ID_CENTER_WINDOW);
+            }
+            else
             {
                 Console.WriteLine("Failed to register center active window hotkey.");
             }
@@ -202,7 +230,11 @@ namespace nyxWM
                 Console.WriteLine("Invalid toggle game mode hotkey in config. Using default.");
                 ParseHotkeyString("mainmod + g", mainmod, out gameModeModifiers, out gameModeKey);
             }
-            if (!RegisterHotKey(IntPtr.Zero, HOTKEY_ID_GAME_MODE, gameModeModifiers, gameModeKey))
+            if (RegisterHotKey(IntPtr.Zero, HOTKEY_ID_GAME_MODE, gameModeModifiers, gameModeKey))
+            {
+                RegisteredHotkeyIds.Add(HOTKEY_ID_GAME_MODE);
+            }
+            else
             {
                 Console.WriteLine("Failed to register toggle game mode hotkey.");
             }
@@ -252,22 +284,41 @@ namespace nyxWM
         }
 
         /// <summary>
-        /// Converts a modifier string (e.g., "CONTROL+SHIFT") to the corresponding modifier flags.
-        /// Note: This method expects a single modifier (no '+') and is used by ParseHotkeyString for each modifier part.
+        /// Converts a modifier string to the corresponding modifier flags.
+        /// Handles both single modifiers (e.g., "CONTROL") and compound modifiers (e.g., "CONTROL+ALT+SHIFT").
         /// </summary>
         private static uint ParseModifierString(string modifierString)
         {
-            // This method now expects a single modifier (like "CONTROL") and returns the flag.
-            // We keep the same logic as before but for a single part.
-            string trimmed = modifierString.Trim().ToUpperInvariant();
-            return trimmed switch
+            if (string.IsNullOrWhiteSpace(modifierString))
+                return 0;
+
+            // Split by '+' to handle compound modifiers
+            string[] parts = modifierString.Split('+', StringSplitOptions.RemoveEmptyEntries);
+            uint modifiers = 0;
+
+            // Process each part
+            foreach (string part in parts)
             {
-                "CONTROL" => 0x0002, // MOD_CONTROL
-                "ALT" => 0x0001, // MOD_ALT
-                "SHIFT" => 0x0004, // MOD_SHIFT
-                "WIN" or "LWIN" or "RWIN" => 0x0008, // MOD_WIN
-                _ => 0 // Unknown modifier
-            };
+                string trimmed = part.Trim().ToUpperInvariant();
+                uint partFlag = trimmed switch
+                {
+                    "CONTROL" => 0x0002, // MOD_CONTROL
+                    "ALT" => 0x0001, // MOD_ALT
+                    "SHIFT" => 0x0004, // MOD_SHIFT
+                    "WIN" or "LWIN" or "RWIN" => 0x0008, // MOD_WIN
+                    _ => 0 // Unknown modifier
+                };
+
+                if (partFlag == 0)
+                {
+                    // If any part is unrecognized, the whole string is invalid
+                    return 0;
+                }
+
+                modifiers |= partFlag;
+            }
+
+            return modifiers;
         }
 
         /// <summary>
