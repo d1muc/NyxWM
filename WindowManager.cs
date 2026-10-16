@@ -523,6 +523,10 @@ namespace nyxWM
                 int stepX = pt.X - startMouseX;
                 int stepY = pt.Y - startMouseY;
 
+                // Apply camera sensitivity
+                stepX = (int)(stepX * ConfigManager.Current.CameraSensitivity);
+                stepY = (int)(stepY * ConfigManager.Current.CameraSensitivity);
+
                 // Normal movement: windows follow mouse
                 targetDx += stepX;
                 targetDy += stepY;

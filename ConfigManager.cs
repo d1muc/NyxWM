@@ -174,6 +174,14 @@ namespace nyxWM
                 changed = true;
             }
 
+            // Validate CameraSensitivity
+            if (settings.CameraSensitivity <= 0)
+            {
+                Console.WriteLine($"Invalid cameraSensitivity: {settings.CameraSensitivity}. Using default 1.0.");
+                settings.CameraSensitivity = 1.0f;
+                changed = true;
+            }
+
             if (settings.Hotkeys == null)
             {
                 Console.WriteLine("Hotkeys section missing. Using default hotkeys.");
@@ -425,6 +433,11 @@ namespace nyxWM
         /// The button or key combination used to move the camera (e.g., "MBUTTON", "ALT+LEFT").
         /// </summary>
         public string CameraMoveButton { get; set; } = "MBUTTON";
+
+        /// <summary>
+        /// Sensitivity of camera movement (higher = faster movement). Must be > 0.
+        /// </summary>
+        public float CameraSensitivity { get; set; } = 1.0f;
 
         /// <summary>
         /// List of window class names to ignore when tiling/moving windows.
