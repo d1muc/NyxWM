@@ -432,7 +432,7 @@ namespace nyxWM
             if (!_isPaused)
             {
                 _isPaused = true;
-                _mouseHook.Stop();
+                _mouseHook?.SetEnabled(false);
                 Console.WriteLine("Game mode activated (paused).");
             }
             // If already paused, do nothing.
@@ -452,19 +452,14 @@ namespace nyxWM
 
         /// <summary>
         /// Sets the pause state and manages the mouse hook accordingly.
+        /// When paused, disables filtering but keeps the hook active.
+        /// When unpaused, enables filtering.
         /// </summary>
         /// <param name="pause">True to pause, false to unpause</param>
         public void SetPause(bool pause)
         {
             _isPaused = pause;
-            if (_isPaused)
-            {
-                _mouseHook?.Stop();
-            }
-            else
-            {
-                _mouseHook?.Start();
-            }
+            _mouseHook?.SetEnabled(!pause);
         }
 
         /// <summary>

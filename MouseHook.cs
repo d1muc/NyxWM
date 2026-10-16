@@ -42,6 +42,7 @@ namespace nyxWM
         private readonly HashSet<int> _pressedKeys = new HashSet<int>();
         private readonly string _mainmod;
         private bool _isDragging = false;
+        private bool _isEnabled = true;
 
         public MouseHook(string cameraMoveButton, string mainmod)
         {
@@ -195,10 +196,80 @@ namespace nyxWM
                         }
                         break;
                 }
+
+                // Determine if we should block this event
+                bool shouldBlock = _isEnabled && _isDragging && IsEventBlockedByCurrentState(message, lParam);
+
+                // If we should block, return non-zero to prevent the event from reaching the system
+                if (shouldBlock)
+                {
+                    return new IntPtr(1);
+                }
             }
 
             // Call the next hook in the chain without blocking
             return hMouseHook == IntPtr.Zero ? IntPtr.Zero : WinApi.CallNextHookEx(hMouseHook, nCode, wParam, lParam);
+        }
+
+        /// <summary>
+        /// Determines if the given event should be blocked based on current state.
+        /// Returns true if the event is for a key/button that's part of the required combination.
+        /// </summary>
+        private bool IsEventBlockedByCurrentState(uint message, IntPtr lParam)
+        {
+            // Check if this event corresponds to a key in our required keys
+            int vkCode = 0;
+            bool isKeyboardEvent =
+                message == WM_KEYDOWN ||
+                message == WM_KEYUP ||
+                message == WM_SYSKEYDOWN ||
+                message == WM_SYSKEYUP;
+
+            if (isKeyboardEvent)
+            {
+                // For keyboard events, get the vkCode from the KBDLLHOOKSTRUCT
+                var keyboardHookStruct = Marshal.PtrToStructure<WinApi.KBDLLHOOKSTRUCT>(lParam);
+                vkCode = (int)keyboardHookStruct.vkCode;
+            }
+            else
+            {
+                // Handle mouse button events
+                switch (message)
+                {
+                    case WM_LBUTTONDOWN:
+                    case WM_LBUTTONUP:
+                        vkCode = WinApi.VK_LBUTTON;
+                        break;
+                    case WM_RBUTTONDOWN:
+                    case WM_RBUTTONUP:
+                        vkCode = WinApi.VK_RBUTTON;
+                        break;
+                    case WM_MBUTTONDOWN:
+                    case WM_MBUTTONUP:
+                        vkCode = WinApi.VK_MBUTTON;
+                        break;
+                    case WM_XBUTTONDOWN:
+                    case WM_XBUTTONUP:
+                        // For X buttons, we need to get the actual button from mouseData
+                        var mouseHookStruct = Marshal.PtrToStructure<WinApi.MSLLHOOKSTRUCT>(lParam);
+                        uint buttonData = (mouseHookStruct.mouseData >> 16) & 0xFFFF;
+                        vkCode = buttonData switch
+                        {
+                            1 => WinApi.VK_XBUTTON1,
+                            2 => WinApi.VK_XBUTTON2,
+                            _ => 0
+                        };
+                        break;
+                }
+            }
+
+            // If we couldn't determine a VK code, don't block
+            if (vkCode == 0)
+                return false;
+
+            // Check if this VK code (or its generalized form) is in our required keys
+            int generalizedVkCode = MapToGeneralizedKey(vkCode);
+            return _requiredKeys.Contains(generalizedVkCode);
         }
 
         private IntPtr KeyboardHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -227,6 +298,15 @@ namespace nyxWM
                         _pressedKeys.Remove(MapToGeneralizedKey(keyCode));
                         CheckDragState();
                         break;
+                }
+
+                // Determine if we should block this event
+                bool shouldBlock = _isEnabled && _isDragging && IsEventBlockedByCurrentState(message, lParam);
+
+                // If we should block, return non-zero to prevent the event from reaching the system
+                if (shouldBlock)
+                {
+                    return new IntPtr(1);
                 }
             }
 
@@ -377,6 +457,21 @@ namespace nyxWM
             _pressedKeys.Clear();
             _isDragging = false;
             OnDragStop?.Invoke();
+        }
+
+        /// <summary>
+        /// Sets whether the hook should actively filter and suppress input.
+        /// When disabled, all events are passed through to the system.
+        /// </summary>
+        /// <param name="enabled">True to enable filtering, false to disable</param>
+        public void SetEnabled(bool enabled)
+        {
+            _isEnabled = enabled;
+            // If disabling, reset state to prevent stuck keys
+            if (!enabled)
+            {
+                ResetState();
+            }
         }
 
         public void Stop()
