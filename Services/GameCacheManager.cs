@@ -25,6 +25,43 @@ namespace nyxWM
         // Thread-safe store of blacklisted executable names (without path, lowercased for case-insensitive comparison)
         private static readonly ConcurrentDictionary<string, bool> _blacklistedExes = new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
+        // Default blacklist of non-game executables (embedded)
+        private static readonly string[] _defaultBlacklist = new string[]
+        {
+            "7z.exe", "7zfm.exe", "access.exe", "acrord32.exe", "acrord64.exe", "acrobat.exe", "androidstudio.exe",
+            "audacity.exe", "brave.exe", "bridge.exe", "chrome.exe", "chromedriver.exe", "chromium.exe", "clion.exe",
+            "cmd.exe", "control.exe", "devenv.exe", "discord.exe", "dreamweaver.exe", "dwm.exe", "eclipse.exe",
+            "edge.exe", "excel.exe", "explorer.exe", "filezilla.exe", "firefox.exe", "flashplayer.exe",
+            "flashplayerplugin.exe", "fleet.exe", "fontdrvhost.exe", "ftp.exe", "gcc.exe", "g++.exe", "git.exe",
+            "gitbash.exe", "gitcmd.exe", "goland.exe", "groove.exe", "gotomeeting.exe", "heidisql.exe", "idea64.exe",
+            "idea32.exe", "iexplore.exe", "iisexpress.exe", "infopath.exe", "intellijidea.exe", "intellijidea64.exe",
+            "jupyter-notebook.exe", "jupyter.exe", "java.exe", "javaw.exe", "javaws.exe", "kmplayer.exe",
+            "lightroom.exe", "linqpad.exe", "lync.exe", "magnify.exe", "mappoint.exe", "mspaint.exe",
+            "msaccess.exe", "msbuild.exe", "msconfig.exe", "msdia.exe", "msedge.exe", "mshtmled.exe", "mshta.exe",
+            "msiexec.exe", "mspub.exe", "mstsc.exe", "mstscax.dll", "mucmd.exe", "mysqld.exe", "mysql.exe",
+            "netbeans.exe", "narrator.exe", "navicat.exe", "node.exe", "npm.exe", "notepad++.exe", "notepad.exe",
+            "nvidia-settings.exe", "nvidia-container.exe", "origin.exe", "outlook.exe", "pandora.exe", "paint.net.exe",
+            "paint.exe", "pycharm64.exe", "pycharm32.exe", "phpstorm.exe", "potplayer.exe", "powerpnt.exe",
+            "powershell.exe", "powershell_ise.exe", "pppoe.exe", "premiere.exe", "prince.exe", "procexp.exe",
+            "processhacker.exe", "pspad.exe", "putty.exe", "python.exe", "pythonw.exe", "qtcreator.exe",
+            "quicktime.exe", "ranger.exe", "reaper.exe", "regedit.exe", "regedt32.exe", "resmon.exe", "rider.exe",
+            "rubymine.exe", "safari.exe", "screenpresso.exe", "signal.exe", "sketchup.exe", "slack.exe",
+            "slui.exe", "snippingtool.exe", "soapui.exe", "soundcloud.exe", "spotify.exe", "sql.exe", "sqlcmd.exe",
+            "sqldeveloper.exe", "ssms.exe", "steam.exe", "sticky.exe", "sticky_notes.exe", "subversion.exe",
+            "svchost.exe", "teams.exe", "teamviewer.exe", "telegram.exe", "terminal.exe", "tether.exe",
+            "tibia.exe", "torrent.exe", "totaltcmd.exe", "tortoisegit.exe", "tortoisehg.exe", "tortoisesvn.exe",
+            "transmission.exe", "trello.exe", "triangle.exe", "trojan.exe", "truecrypt.exe", "ultraiso.exe",
+            "uninstall.exe", "unrealengine.exe", "updater.exe", "uplay.exe", "vbscript.exe", "vcredist.exe",
+            "vlc.exe", "vmware.exe", "vmwareworkstation.exe", "vncviewer.exe", "vsdbg.exe", "vscode.exe",
+            "w3wp.exe", "wab.exe", "wciprov.exe", "wcicust.exe", "wdf.exe", "wdfpldmpex.exe", "wdigest.exe",
+            "wdmaud.dll", "wextract.exe", "wia.exe", "winmine.exe", "winver.exe", "wlanhlp.exe",
+            "wmiadap.exe", "wmiprvse.exe", "wmplayer.exe", "wmpnetwk.exe", "wmpnssci.exe", "wow64cpu.dll",
+            "wow64win.dll", "write.exe", "wshelp.exe", "wsim.exe", "wscript.exe", "xcons.exe", "xlist.exe",
+            "xmsgsrv.exe", "yahoomesnger.exe", "yahoomessenger.exe", "zip.exe", "zlenfio.exe", "zlobtv.dll",
+            "zlobz.dll", "zlusbdsk.exe", "zipped.exe", "zipper.exe", "zlibwapi.dll", "zltidc11.dll", "zvtray.exe",
+            "zzzzz.exe"
+        };
+
         // Lock for file operations to prevent concurrent reads/writes
         private static readonly SemaphoreSlim _fileLock = new SemaphoreSlim(1, 1);
 
@@ -63,11 +100,18 @@ namespace nyxWM
                         }
                     }
                 }
+                else
+                {
+                    // If cache file doesn't exist, create it with an empty list
+                    SaveCache();
+                }
             }
             catch (Exception ex)
             {
                 // Log error but continue with empty cache
                 Console.WriteLine($"Failed to load game cache: {ex.Message}");
+                // Ensure we have at least an empty cache
+                _knownGames.Clear();
             }
         }
 
@@ -126,18 +170,29 @@ namespace nyxWM
                 else
                 {
                     // If blacklist file doesn't exist, create it with default values
-                    _blacklistedExes["explorer.exe"] = true;
-                    _blacklistedExes["cmd.exe"] = true;
+                    foreach (var exe in _defaultBlacklist)
+                    {
+                        if (!string.IsNullOrWhiteSpace(exe))
+                        {
+                            _blacklistedExes[exe.Trim().ToLowerInvariant()] = true;
+                        }
+                    }
                     SaveBlacklist();
                 }
             }
             catch (Exception ex)
             {
-                // Log error but continue with empty blacklist
+                // Log error but continue with default blacklist
                 Console.WriteLine($"Failed to load blacklist: {ex.Message}");
                 // Ensure we have at least the default blacklist
-                _blacklistedExes["explorer.exe"] = true;
-                _blacklistedExes["cmd.exe"] = true;
+                _blacklistedExes.Clear();
+                foreach (var exe in _defaultBlacklist)
+                {
+                    if (!string.IsNullOrWhiteSpace(exe))
+                    {
+                        _blacklistedExes[exe.Trim().ToLowerInvariant()] = true;
+                    }
+                }
             }
         }
 
