@@ -1,6 +1,3 @@
-# Build artifacts
-[Bb]in/
-[Oo]bj/
 # Test results
 [Test]*results
 # NuGet packages
@@ -8,8 +5,7 @@
 # Dependency directories
 packages/
 # .NET Core
-**/obj/
-**/bin/
+# Build artifacts
 # Visual Studio files
 .vs/
 *.suo
@@ -26,3 +22,11 @@ ehthumbs.dat
 Desktop.ini
 $RECYCLE.BIN/
 *.lk*
+
+
+.claude/
+CLAUDE.md
+TODO_AGENT.md
+
+
+.gitignore

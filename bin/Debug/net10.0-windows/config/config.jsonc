@@ -1,0 +1,23 @@
+{
+  "FallbackRefreshRate": 60,
+  "LerpRatePerSecond": 8,
+  "AutoCenterOnFocusDefault": true,
+  "PauseOnFullscreen": true,
+  "MainMod": "CONTROL+ALT",
+  "CameraMoveButton": "MBUTTON",
+  "CameraSensitivity": 0.8,
+  "IgnoredWindowClassNames": [
+    "Shell_TrayWnd",
+    "Progman",
+    "WorkerW",
+    "CEF-OSC-WIDGET",
+    "NvOverlayWindow"
+  ],
+  "Hotkeys": {
+    "ResetCamera": "mainmod + space",
+    "ToggleAutoCenter": "mainmod + t",
+    "CloseWindow": "mainmod + c",
+    "CenterActiveWindow": "mainmod + f",
+    "ToggleGameMode": "mainmod + g"
+  }
+}

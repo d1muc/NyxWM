@@ -1,0 +1,15 @@
+D:\Doc\nyx\nyxWM\nyxWM\bin\Debug\net10.0-windows\nyxWM.exe
+D:\Doc\nyx\nyxWM\nyxWM\bin\Debug\net10.0-windows\nyxWM.deps.json
+D:\Doc\nyx\nyxWM\nyxWM\bin\Debug\net10.0-windows\nyxWM.runtimeconfig.json
+D:\Doc\nyx\nyxWM\nyxWM\bin\Debug\net10.0-windows\nyxWM.dll
+D:\Doc\nyx\nyxWM\nyxWM\bin\Debug\net10.0-windows\nyxWM.pdb
+D:\Doc\nyx\nyxWM\nyxWM\obj\Debug\net10.0-windows\nyxWM.GeneratedMSBuildEditorConfig.editorconfig
+D:\Doc\nyx\nyxWM\nyxWM\obj\Debug\net10.0-windows\nyxWM.AssemblyInfoInputs.cache
+D:\Doc\nyx\nyxWM\nyxWM\obj\Debug\net10.0-windows\nyxWM.AssemblyInfo.cs
+D:\Doc\nyx\nyxWM\nyxWM\obj\Debug\net10.0-windows\nyxWM.csproj.CoreCompileInputs.cache
+D:\Doc\nyx\nyxWM\nyxWM\obj\Debug\net10.0-windows\nyxWM.dll
+D:\Doc\nyx\nyxWM\nyxWM\obj\Debug\net10.0-windows\refint\nyxWM.dll
+D:\Doc\nyx\nyxWM\nyxWM\obj\Debug\net10.0-windows\nyxWM.pdb
+D:\Doc\nyx\nyxWM\nyxWM\obj\Debug\net10.0-windows\nyxWM.genruntimeconfig.cache
+D:\Doc\nyx\nyxWM\nyxWM\obj\Debug\net10.0-windows\ref\nyxWM.dll
+D:\Doc\nyx\nyxWM\nyxWM\obj\Debug\net10.0-windows\nyxWM.sourcelink.json
