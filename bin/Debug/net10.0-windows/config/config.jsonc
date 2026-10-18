@@ -5,7 +5,7 @@
   "PauseOnFullscreen": true,
   "MainMod": "CONTROL+ALT",
   "CameraMoveButton": "MBUTTON",
-  "CameraSensitivity": 0.8,
+  "CameraSensitivity": 1,
   "IgnoredWindowClassNames": [
     "Shell_TrayWnd",
     "Progman",

@@ -42,10 +42,12 @@ namespace nyxWM
             // Declare renderTimer as nullable to be assigned later
             HighResolutionTimer? renderTimer = null;
 
+            string IconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Res", "Pictures", "logo.ico");
+
             // Set up system tray icon
             var notifyIcon = new NotifyIcon
             {
-                Icon = SystemIcons.Application,
+                Icon = File.Exists(IconPath) ? new System.Drawing.Icon(IconPath) : SystemIcons.Application,
                 Visible = true
             };
             var contextMenu = new ContextMenuStrip();

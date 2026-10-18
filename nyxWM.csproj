@@ -6,5 +6,11 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <UseAppHost>true</UseAppHost>
+    <ApplicationIcon>Res/Pictures/logo.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <None Update="Res/**/*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>
