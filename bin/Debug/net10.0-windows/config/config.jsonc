@@ -24,6 +24,8 @@
     // Add hotkeys to launch programs here, e.g.:
     // "mainmod + 1": "C:\\Windows\\notepad.exe",
     // "mainmod + 2": "D:\\Games\\example.exe"
-    
+    "mainmod + n": "C:\\Windows\\notepad.exe",
+    "mainmod + v": "C:\\Users\\ADMIN\\OneDrive\\Desktop\\рабочий стол\\Visual Studio Code.lnk",
+    "mainmod + d": "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Google Chrome.lnk"
   }
 }
