@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("nyxWM")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+29403a0f526c1b7dbb15fb6d8c68a9f0fa122384")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+8c1f1d363df6219b078819e42f21a6240c13eebd")]
 [assembly: System.Reflection.AssemblyProductAttribute("nyxWM")]
 [assembly: System.Reflection.AssemblyTitleAttribute("nyxWM")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

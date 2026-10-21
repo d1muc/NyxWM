@@ -242,6 +242,44 @@ namespace nyxWM
                 }
             }
 
+            // Validate LaunchApps: each key must be a valid hotkey string and each value a non-empty path.
+            if (settings.LaunchApps == null)
+            {
+                settings.LaunchApps = new Dictionary<string, string>();
+            }
+            else
+            {
+                var validated = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var kvp in settings.LaunchApps)
+                {
+                    string hotkey = kvp.Key ?? string.Empty;
+                    if (!IsValidHotkeyString(hotkey, settings.MainMod))
+                    {
+                        Console.WriteLine($"Invalid launch app hotkey skipped: '{kvp.Key}'.");
+                        changed = true;
+                        continue;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(kvp.Value))
+                    {
+                        Console.WriteLine($"Launch app for hotkey '{kvp.Key}' has an empty path and was skipped.");
+                        changed = true;
+                        continue;
+                    }
+
+                    if (validated.ContainsKey(hotkey))
+                    {
+                        Console.WriteLine($"Duplicate launch app hotkey skipped: '{kvp.Key}'.");
+                        changed = true;
+                        continue;
+                    }
+
+                    validated.Add(hotkey, kvp.Value.Trim());
+                }
+
+                settings.LaunchApps = validated;
+            }
+
             if (changed)
             {
                 Console.WriteLine("Applied default values for invalid or missing configuration settings.");
@@ -448,6 +486,13 @@ namespace nyxWM
         /// Hotkey configurations as strings (e.g., "mainmod + space").
         /// </summary>
         public HotkeySettings Hotkeys { get; set; } = new HotkeySettings();
+
+        /// <summary>
+        /// Map of custom hotkeys to the program/document path each one launches.
+        /// Keys are hotkey strings (e.g., "mainmod + 1") using the same syntax as <see cref="Hotkeys"/>;
+        /// values are executable or document paths (can also be a URL).
+        /// </summary>
+        public Dictionary<string, string> LaunchApps { get; set; } = new Dictionary<string, string>();
     }
 
     /// <summary>

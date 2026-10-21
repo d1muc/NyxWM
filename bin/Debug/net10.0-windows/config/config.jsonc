@@ -5,7 +5,7 @@
   "PauseOnFullscreen": true,
   "MainMod": "CONTROL+ALT",
   "CameraMoveButton": "MBUTTON",
-  "CameraSensitivity": 1,
+  "CameraSensitivity": 0.5,
   "IgnoredWindowClassNames": [
     "Shell_TrayWnd",
     "Progman",
@@ -19,5 +19,11 @@
     "CloseWindow": "mainmod + c",
     "CenterActiveWindow": "mainmod + f",
     "ToggleGameMode": "mainmod + g"
+  },
+  "LaunchApps": {
+    // Add hotkeys to launch programs here, e.g.:
+    // "mainmod + 1": "C:\\Windows\\notepad.exe",
+    // "mainmod + 2": "D:\\Games\\example.exe"
+    
   }
 }

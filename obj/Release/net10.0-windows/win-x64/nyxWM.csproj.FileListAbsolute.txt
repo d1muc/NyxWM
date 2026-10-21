@@ -1,0 +1,5 @@
+D:\Doc\nyx\nyxWM\nyxWM\obj\Release\net10.0-windows\win-x64\nyxWM.GeneratedMSBuildEditorConfig.editorconfig
+D:\Doc\nyx\nyxWM\nyxWM\obj\Release\net10.0-windows\win-x64\nyxWM.AssemblyInfoInputs.cache
+D:\Doc\nyx\nyxWM\nyxWM\obj\Release\net10.0-windows\win-x64\nyxWM.AssemblyInfo.cs
+D:\Doc\nyx\nyxWM\nyxWM\obj\Release\net10.0-windows\win-x64\nyxWM.csproj.CoreCompileInputs.cache
+D:\Doc\nyx\nyxWM\nyxWM\obj\Release\net10.0-windows\win-x64\nyxWM.sourcelink.json

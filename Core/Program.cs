@@ -15,10 +15,14 @@ namespace nyxWM
         internal const int HOTKEY_ID_CLOSE_WINDOW = 0x0003;
         internal const int HOTKEY_ID_CENTER_WINDOW = 0x0004;
         internal const int HOTKEY_ID_GAME_MODE = 0x0005;
+        internal const int HOTKEY_ID_LAUNCH_APP_BASE = 0x1000;
         internal const int WM_HOTKEY = 0x0312;
 
         // Track registered hotkey IDs for proper cleanup
         private static readonly List<int> RegisteredHotkeyIds = new();
+
+        // Maps a launch-app hotkey ID to the program/document path it should open.
+        internal static readonly Dictionary<int, string> LaunchAppPaths = new();
 
         // Hotkey functions
         [DllImport("user32.dll")]
@@ -240,6 +244,74 @@ namespace nyxWM
             {
                 Console.WriteLine("Failed to register toggle game mode hotkey.");
             }
+
+            // Register launch app hotkeys
+            RegisterLaunchAppHotkeys(mainmod);
+        }
+
+        /// <summary>
+        /// Registers hotkeys for launching programs based on the LaunchApps configuration.
+        /// Each entry maps a hotkey string to a program/document path and is assigned a unique
+        /// hotkey ID starting at <see cref="HOTKEY_ID_LAUNCH_APP_BASE"/>.
+        /// </summary>
+        private static void RegisterLaunchAppHotkeys(string mainmod)
+        {
+            LaunchAppPaths.Clear();
+
+            var config = ConfigManager.Current;
+            if (config.LaunchApps == null || config.LaunchApps.Count == 0)
+            {
+                return;
+            }
+
+            int id = HOTKEY_ID_LAUNCH_APP_BASE;
+            foreach (var kvp in config.LaunchApps)
+            {
+                string hotkey = kvp.Key;
+                string path = kvp.Value;
+
+                if (!ParseHotkeyString(hotkey, mainmod, out uint modifiers, out uint key))
+                {
+                    Console.WriteLine($"Invalid launch app hotkey skipped: '{hotkey}'.");
+                    continue;
+                }
+
+                if (RegisterHotKey(IntPtr.Zero, id, modifiers, key))
+                {
+                    RegisteredHotkeyIds.Add(id);
+                    LaunchAppPaths[id] = path;
+                    Console.WriteLine($"Registered launch app hotkey '{hotkey}' -> '{path}'.");
+                }
+                else
+                {
+                    Console.WriteLine($"Failed to register launch app hotkey '{hotkey}' (maybe already in use).");
+                }
+
+                id++;
+            }
+        }
+
+        /// <summary>
+        /// Launches the program or document at the given path using the default shell handler.
+        /// Handles executable paths, document files, and URLs.
+        /// </summary>
+        /// <param name="path">Path (or URL) to open.</param>
+        public static void LaunchApplication(string path)
+        {
+            try
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true
+                };
+                Process.Start(startInfo);
+                Console.WriteLine($"Launched application: {path}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to launch application '{path}': {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -426,6 +498,11 @@ namespace nyxWM
                 else if (wParam == Program.HOTKEY_ID_GAME_MODE) // Toggle game mode
                 {
                     _windowManager.ToggleGameMode();
+                    return true; // Message handled
+                }
+                else if (Program.LaunchAppPaths.TryGetValue(wParam, out string launchPath)) // Launch a configured program
+                {
+                    Program.LaunchApplication(launchPath);
                     return true; // Message handled
                 }
             }
