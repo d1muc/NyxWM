@@ -17,8 +17,31 @@ namespace nyxWM
         private const uint SWP_NOACTIVATE = 0x0010;
         private const uint SWP_FLAGS = SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE;
 
-        // Cached initial positions of windows when dragging starts
-        private readonly Dictionary<IntPtr, WinApi.RECT> initialWindowPositions = new();
+        // Immutable snapshot of the window handles and their base positions used by the render
+        // thread. The arrays are republished (never mutated) so the timer thread can iterate
+        // them without blocking the UI thread on WinAPI calls.
+        private IntPtr[] _renderHandles = Array.Empty<IntPtr>();
+        private WinApi.RECT[] _renderRects = Array.Empty<WinApi.RECT>();
+        private int _renderCount;
+        private readonly object _positionsLock = new();
+
+        // Cached top-level window handles. Rebuilt lazily instead of enumerating the whole
+        // desktop on every focus change or drag start.
+        private const int InitialCacheCapacity = 64;
+        private readonly List<IntPtr> cachedWindows = new(InitialCacheCapacity);
+        private readonly object _cachedWindowsLock = new();
+        private volatile bool _cacheDirty = true;
+
+        // Last integer offset applied to the windows (avoids redundant WinAPI batches)
+        private int _lastAppliedDx = int.MinValue;
+        private int _lastAppliedDy = int.MinValue;
+
+        // Reused string buffers for window enumeration (avoids per-window allocations)
+        private readonly StringBuilder _classNameBuffer = new(256);
+        private readonly StringBuilder _debugTextBuffer = new(256);
+
+        // Offset (in pixels) below which the animation snaps to the target and goes idle
+        private const float SettledThreshold = 0.5f;
 
         // Mouse start position (at drag start)
         private int startMouseX;
@@ -28,6 +51,10 @@ namespace nyxWM
         private float currentDx = 0, currentDy = 0;   // current window offset
         private float targetDx = 0, targetDy = 0;     // target offset from mouse movement
         private bool isDragging = false;
+
+        // Dirty flag: true only while windows need to move. Lets UpdatePosition return
+        // immediately when the workspace is at rest.
+        private volatile bool _isAnimating;
 
         // Frame timing
         private long _lastUpdateTicks = 0;
@@ -51,6 +78,9 @@ namespace nyxWM
         // WinEvent hook fields
         private WinApi.WinEventProc _winEventProcDelegate;
         private IntPtr _winEventHookHandle;
+        private WinApi.WinEventProc _winEventObjectProcDelegate;
+        private IntPtr _winEventCreateHookHandle;
+        private IntPtr _winEventDestroyHookHandle;
         private SynchronizationContext? _syncContext;
 
         // Anti-cheat pause fields
@@ -99,6 +129,28 @@ namespace nyxWM
                 0,
                 0,
                 WinApi.WINEVENT_OUTOFCONTEXT | WinApi.WINEVENT_SKIPOWNPROCESS);
+
+            // Track window creation/destruction so the cached handle list stays current
+            // without re-enumerating the whole desktop.
+            _winEventObjectProcDelegate = new WinApi.WinEventProc(WinEventObjectProcCallback);
+
+            _winEventCreateHookHandle = WinApi.SetWinEventHook(
+                WinApi.EVENT_OBJECT_CREATE,
+                WinApi.EVENT_OBJECT_CREATE,
+                IntPtr.Zero,
+                _winEventObjectProcDelegate,
+                0,
+                0,
+                WinApi.WINEVENT_OUTOFCONTEXT | WinApi.WINEVENT_SKIPOWNPROCESS);
+
+            _winEventDestroyHookHandle = WinApi.SetWinEventHook(
+                WinApi.EVENT_OBJECT_DESTROY,
+                WinApi.EVENT_OBJECT_DESTROY,
+                IntPtr.Zero,
+                _winEventObjectProcDelegate,
+                0,
+                0,
+                WinApi.WINEVENT_OUTOFCONTEXT | WinApi.WINEVENT_SKIPOWNPROCESS);
         }
 
         /// <summary>
@@ -110,6 +162,18 @@ namespace nyxWM
             {
                 WinApi.UnhookWinEvent(_winEventHookHandle);
                 _winEventHookHandle = IntPtr.Zero;
+            }
+
+            if (_winEventCreateHookHandle != IntPtr.Zero)
+            {
+                WinApi.UnhookWinEvent(_winEventCreateHookHandle);
+                _winEventCreateHookHandle = IntPtr.Zero;
+            }
+
+            if (_winEventDestroyHookHandle != IntPtr.Zero)
+            {
+                WinApi.UnhookWinEvent(_winEventDestroyHookHandle);
+                _winEventDestroyHookHandle = IntPtr.Zero;
             }
         }
 
@@ -148,6 +212,149 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Callback for WinEvent create/destroy notifications. Keeps the cached window handle
+        /// list current without a full EnumWindows sweep.
+        /// </summary>
+        private void WinEventObjectProcCallback(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
+        {
+            // Only top-level window objects are managed.
+            if (hwnd == IntPtr.Zero || idObject != WinApi.OBJID_WINDOW || idChild != WinApi.CHILDID_SELF)
+                return;
+
+            if (WinApi.GetAncestor(hwnd, WinApi.GA_ROOT) != hwnd)
+                return;
+
+            if (eventType == WinApi.EVENT_OBJECT_DESTROY)
+            {
+                lock (_cachedWindowsLock)
+                {
+                    cachedWindows.Remove(hwnd);
+                }
+                return;
+            }
+
+            // A window is usually created hidden and becomes visible later, so add it right
+            // away only when it already qualifies; otherwise rebuild lazily on next use.
+            if (IsCacheEligibleWindow(hwnd, _classNameBuffer))
+            {
+                lock (_cachedWindowsLock)
+                {
+                    if (!cachedWindows.Contains(hwnd))
+                    {
+                        cachedWindows.Add(hwnd);
+                    }
+                }
+            }
+            else
+            {
+                _cacheDirty = true;
+            }
+        }
+
+        /// <summary>
+        /// Checks whether a window should be part of the managed workspace.
+        /// The caller supplies the class-name buffer so no per-window allocation happens.
+        /// </summary>
+        private bool IsCacheEligibleWindow(IntPtr hWnd, StringBuilder classNameBuffer)
+        {
+            if (!WinApi.IsWindowVisible(hWnd))
+                return false;
+
+            if (WinApi.IsIconic(hWnd))
+                return false;
+
+            if (WinApi.GetWindowTextLength(hWnd) == 0)
+                return false;
+
+            WinApi.GetClassName(hWnd, classNameBuffer, classNameBuffer.Capacity);
+            return !IsIgnoredWindow(classNameBuffer.ToString());
+        }
+
+        /// <summary>
+        /// Rebuilds the cached window handle list if it was invalidated by window creation.
+        /// </summary>
+        private void EnsureWindowCache()
+        {
+            if (!_cacheDirty)
+                return;
+
+            RebuildWindowCache();
+        }
+
+        /// <summary>
+        /// Performs a single full desktop enumeration and replaces the cached handle list.
+        /// </summary>
+        private void RebuildWindowCache()
+        {
+            var freshHandles = new List<IntPtr>(InitialCacheCapacity);
+            // One buffer per rebuild (not per window) keeps the sweep allocation-free.
+            var classNameBuffer = new StringBuilder(256);
+
+            WinApi.EnumWindows((hWnd, lParam) =>
+            {
+                if (IsCacheEligibleWindow(hWnd, classNameBuffer))
+                {
+                    freshHandles.Add(hWnd);
+                }
+                return true;
+            }, IntPtr.Zero);
+
+            lock (_cachedWindowsLock)
+            {
+                cachedWindows.Clear();
+                cachedWindows.AddRange(freshHandles);
+            }
+
+            _cacheDirty = false;
+        }
+
+        /// <summary>
+        /// Publishes a new render snapshot from the cached window handles. Called from the UI
+        /// thread; the timer thread reads the previous snapshot until the swap completes.
+        /// </summary>
+        private void RefreshRenderCache()
+        {
+            EnsureWindowCache();
+
+            IntPtr[] handles = Array.Empty<IntPtr>();
+            WinApi.RECT[] rects = Array.Empty<WinApi.RECT>();
+            int count = 0;
+
+            lock (_cachedWindowsLock)
+            {
+                // Sized inside the lock: the handle list can change between ticks.
+                int capacity = Math.Max(InitialCacheCapacity, cachedWindows.Count);
+                handles = new IntPtr[capacity];
+                rects = new WinApi.RECT[capacity];
+
+                foreach (IntPtr hWnd in cachedWindows)
+                {
+                    // Visibility/minimized state can change without a cache invalidation.
+                    if (!WinApi.IsWindowVisible(hWnd) || WinApi.IsIconic(hWnd))
+                        continue;
+
+                    if (!WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
+                        continue;
+
+                    // Skip windows with invalid coordinates (far off-screen)
+                    if (rect.Left < -10000 || rect.Top < -10000)
+                        continue;
+
+                    handles[count] = hWnd;
+                    rects[count] = rect;
+                    count++;
+                }
+            }
+
+            lock (_positionsLock)
+            {
+                _renderHandles = handles;
+                _renderRects = rects;
+                _renderCount = count;
+            }
+        }
+
+        /// <summary>
         /// Handles the foreground window change event on the UI thread.
         /// </summary>
         /// <param name="hwnd">The handle of the window that gained focus.</param>
@@ -157,9 +364,12 @@ namespace nyxWM
             int debugTitleLen = WinApi.GetWindowTextLength(hwnd);
             if (debugTitleLen > 0)
             {
-                var titleSb = new System.Text.StringBuilder(debugTitleLen + 1);
-                WinApi.GetWindowText(hwnd, titleSb, titleSb.Capacity);
-                Console.WriteLine($"HandleFocusChange: hwnd={hwnd.ToInt64():X} title=\"{titleSb}\"");
+                if (_debugTextBuffer.Capacity < debugTitleLen + 1)
+                {
+                    _debugTextBuffer.Capacity = debugTitleLen + 1;
+                }
+                WinApi.GetWindowText(hwnd, _debugTextBuffer, _debugTextBuffer.Capacity);
+                Console.WriteLine($"HandleFocusChange: hwnd={hwnd.ToInt64():X} title=\"{_debugTextBuffer}\"");
             }
             else
             {
@@ -181,9 +391,8 @@ namespace nyxWM
             if (titleLen == 0)
                 return;
 
-            var classNameBuilder = new System.Text.StringBuilder(256);
-            WinApi.GetClassName(hwnd, classNameBuilder, classNameBuilder.Capacity);
-            string className = classNameBuilder.ToString();
+            WinApi.GetClassName(hwnd, _classNameBuffer, _classNameBuffer.Capacity);
+            string className = _classNameBuffer.ToString();
 
             // Skip ignored windows
             if (IsIgnoredWindow(className))
@@ -258,47 +467,9 @@ namespace nyxWM
                 }
             }
 
-            // Update initialWindowPositions with current positions of all visible windows.
-            initialWindowPositions.Clear();
-            WinApi.EnumWindows((hWnd, lParam) =>
-            {
-                // Skip invisible windows
-                if (!WinApi.IsWindowVisible(hWnd))
-                    return true;
-
-                // Skip minimized windows
-                if (WinApi.IsIconic(hWnd))
-                    return true;
-
-                // Skip windows with empty title
-                int winTitleLen = WinApi.GetWindowTextLength(hWnd);
-                if (winTitleLen == 0)
-                    return true;
-
-                // Get window class name to filter out system UI
-                var winClassNameBuilder = new System.Text.StringBuilder(256);
-                WinApi.GetClassName(hWnd, winClassNameBuilder, winClassNameBuilder.Capacity);
-                string winClassName = winClassNameBuilder.ToString();
-
-                // Skip ignored windows
-                if (IsIgnoredWindow(winClassName))
-                {
-                    return true;
-                }
-
-                // Get window rectangle
-                if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
-                {
-                    // Skip windows with invalid coordinates (far off-screen)
-                    if (rect.Left < -10000 || rect.Top < -10000)
-                        return true;
-
-                    // Store current position
-                    initialWindowPositions[hWnd] = rect;
-                }
-
-                return true; // continue enumeration
-            }, IntPtr.Zero);
+            // Refresh the positions of the managed windows from the cached handle list
+            // (a full EnumWindows sweep only happens when the cache was invalidated).
+            RefreshRenderCache();
 
             // Get the rectangle of the focused window
             if (!WinApi.GetWindowRect(hwnd, out WinApi.RECT rect))
@@ -322,6 +493,7 @@ namespace nyxWM
             currentDy = 0;
             targetDx = deltaX;
             targetDy = deltaY;
+            _isAnimating = true;
         }
 
 
@@ -357,51 +529,11 @@ namespace nyxWM
             targetDx = 0;
             targetDy = 0;
 
-            // Clear previous cache
-            initialWindowPositions.Clear();
+            // Cache the current positions of the managed windows. The handle list itself is
+            // reused, so no EnumWindows sweep unless windows were created since the last scan.
+            RefreshRenderCache();
 
-            // Enumerate all top-level windows
-            WinApi.EnumWindows((hWnd, lParam) =>
-            {
-                // Skip invisible windows
-                if (!WinApi.IsWindowVisible(hWnd))
-                    return true;
-
-                // Skip windows with empty title
-                int titleLen = WinApi.GetWindowTextLength(hWnd);
-                if (titleLen == 0)
-                    return true;
-
-                // Get window class name to filter out system UI
-                var classNameBuilder = new StringBuilder(256);
-                WinApi.GetClassName(hWnd, classNameBuilder, classNameBuilder.Capacity);
-                string className = classNameBuilder.ToString();
-
-                // Skip ignored windows
-                if (IsIgnoredWindow(className))
-                {
-                    return true;
-                }
-
-                // Get window rectangle
-                if (WinApi.GetWindowRect(hWnd, out WinApi.RECT rect))
-                {
-                    // Store base position (current position minus CURRENT offset)
-                    // At drag start, current offset should be 0 (reset in StartDragging)
-                    initialWindowPositions[hWnd] = new WinApi.RECT
-                    {
-                        Left = rect.Left - (int)Math.Round(currentDx),
-                        Top = rect.Top - (int)Math.Round(currentDy),
-                        Right = rect.Right - (int)Math.Round(currentDx),
-                        Bottom = rect.Bottom - (int)Math.Round(currentDy)
-                    };
-                }
-
-                return true; // continue enumeration
-            }, IntPtr.Zero);
-
-            // Set dragging flag to true
-            isDragging = true;
+            _isAnimating = true;
         }
 
         /// <summary>
@@ -448,6 +580,7 @@ namespace nyxWM
         {
             targetDx = 0;
             targetDy = 0;
+            _isAnimating = true;
         }
 
         /// <summary>
@@ -504,6 +637,7 @@ namespace nyxWM
             // Set target to current offset plus the delta needed to center
             targetDx = currentDx + deltaX;
             targetDy = currentDy + deltaY;
+            _isAnimating = true;
         }
 
         /// <summary>
@@ -514,6 +648,10 @@ namespace nyxWM
         {
             // If paused, skip updating window positions to avoid interfering with games
             if (_isPaused)
+                return;
+
+            // Idle fast-path: nothing is moving, so the timer tick costs almost nothing
+            if (!_isAnimating && !isDragging)
                 return;
 
             // If dragging, update target based on mouse movement and warp cursor
@@ -533,6 +671,8 @@ namespace nyxWM
 
                 // Warp cursor back to start position to allow infinite dragging
                 WinApi.SetCursorPos(startMouseX, startMouseY);
+
+                _isAnimating = true;
             }
 
             // Apply frame-rate independent Lerp smoothing: current chases target
@@ -541,55 +681,85 @@ namespace nyxWM
             currentDx += (targetDx - currentDx) * lerpFactor;
             currentDy += (targetDy - currentDy) * lerpFactor;
 
-            // If not dragging and we've sufficiently reached the target, we can skip updates
-            if (!isDragging &&
-                Math.Abs(targetDx - currentDx) < 0.5f &&
-                Math.Abs(targetDy - currentDy) < 0.5f)
+            // Snap to the target when close enough: stops sub-pixel micro-movements and lets
+            // the animation go idle.
+            bool settled = !isDragging &&
+                           MathF.Abs(targetDx - currentDx) < SettledThreshold &&
+                           MathF.Abs(targetDy - currentDy) < SettledThreshold;
+
+            if (settled)
             {
-                return;
+                currentDx = targetDx;
+                currentDy = targetDy;
             }
 
             // Convert to integer offset for window movement
-            int dx = (int)Math.Round(currentDx);
-            int dy = (int)Math.Round(currentDy);
+            int dx = (int)MathF.Round(currentDx);
+            int dy = (int)MathF.Round(currentDy);
 
-            // Begin deferred window position session
-            IntPtr hdwp = WinApi.BeginDeferWindowPos(initialWindowPositions.Count);
+            // Nothing moved on screen since the previous tick - skip the WinAPI batch
+            if (dx == _lastAppliedDx && dy == _lastAppliedDy)
+            {
+                if (settled)
+                    _isAnimating = false;
+                return;
+            }
+
+            // Snapshot the published render cache (never mutated after publication)
+            IntPtr[] handles;
+            WinApi.RECT[] rects;
+            int count;
+            lock (_positionsLock)
+            {
+                handles = _renderHandles;
+                rects = _renderRects;
+                count = _renderCount;
+            }
+
+            if (count == 0)
+            {
+                _lastAppliedDx = dx;
+                _lastAppliedDy = dy;
+                if (settled)
+                    _isAnimating = false;
+                return;
+            }
+
+            // Begin deferred window position session (with a small margin so Windows does not
+            // have to reallocate the internal structure).
+            IntPtr hdwp = WinApi.BeginDeferWindowPos(count + 5);
             if (hdwp == IntPtr.Zero)
                 return;
 
-            try
+            bool positionedAll = true;
+            for (int i = 0; i < count; i++)
             {
-                // Update each cached window
-                foreach (var kvp in initialWindowPositions)
+                IntPtr hWnd = handles[i];
+                WinApi.RECT rect = rects[i];
+
+                int newX = rect.Left + dx;   // using PLUS as per instruction (inversion achieved via negative target accumulation)
+                int newY = rect.Top + dy;
+
+                // Defer the window position change
+                hdwp = WinApi.DeferWindowPos(hdwp, hWnd, IntPtr.Zero, newX, newY, 0, 0, SWP_FLAGS);
+                if (hdwp == IntPtr.Zero)
                 {
-                    IntPtr hWnd = kvp.Key;
-                    WinApi.RECT rect = kvp.Value;
-
-                    int newX = rect.Left + dx;   // using PLUS as per instruction (inversion achieved via negative target accumulation)
-                    int newY = rect.Top + dy;
-
-                    // Defer the window position change
-                    hdwp = WinApi.DeferWindowPos(hdwp, hWnd, IntPtr.Zero, newX, newY, 0, 0, SWP_FLAGS);
-                    if (hdwp == IntPtr.Zero)
-                        break;
-                }
-
-                // Apply all deferred window position changes
-                if (!WinApi.EndDeferWindowPos(hdwp))
-                {
-                    // If failed, we could optionally fall back to individual SetWindowPos calls
-                    // but for simplicity we just ignore the error.
+                    positionedAll = false;
+                    break;
                 }
             }
-            finally
-            {
-                // Ensure we end the defer session even on error
-                if (hdwp != IntPtr.Zero)
-                {
-                    WinApi.EndDeferWindowPos(hdwp);
-                }
-            }
+
+            // EndDeferWindowPos consumes (and frees) the handle, even on a partial batch.
+            WinApi.EndDeferWindowPos(hdwp);
+
+            if (!positionedAll)
+                return;
+
+            _lastAppliedDx = dx;
+            _lastAppliedDy = dy;
+
+            if (settled)
+                _isAnimating = false;
         }
     }
 }

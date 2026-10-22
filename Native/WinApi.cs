@@ -154,6 +154,15 @@ namespace nyxWM
         public const uint WINEVENT_OUTOFCONTEXT = 0;
         public const uint WINEVENT_SKIPOWNPROCESS = 2;
         public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+        public const uint EVENT_OBJECT_CREATE = 0x8000;
+        public const uint EVENT_OBJECT_DESTROY = 0x8001;
+
+        // Object identifiers for WinEvent callbacks
+        public const int OBJID_WINDOW = 0;
+        public const int CHILDID_SELF = 0;
+
+        // GetAncestor flags
+        public const uint GA_ROOT = 2;
 
         // Window styles
         public const int GWL_STYLE = -16;
@@ -235,6 +244,9 @@ namespace nyxWM
 
         [DllImport("user32.dll")]
         public static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
