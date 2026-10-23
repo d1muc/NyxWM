@@ -13,4 +13,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+  <ItemGroup>
+    <!-- The installer is a separate project; keep it out of the application's implicit globs. -->
+    <Compile Remove="nyxinstaller/**" />
+    <EmbeddedResource Remove="nyxinstaller/**" />
+    <None Remove="nyxinstaller/**" />
+  </ItemGroup>
 </Project>
