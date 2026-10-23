@@ -11,6 +11,7 @@ namespace NyxInstaller.Ui.Controls;
 public sealed class OptionCard : Control
 {
     private readonly ToggleSwitch _toggle;
+    private readonly TweenColor _fill;
     private bool _hover;
     private string _title = string.Empty;
     private string _description = string.Empty;
@@ -28,6 +29,8 @@ public sealed class OptionCard : Control
         Size = new Size(820, 88);
         Cursor = Cursors.Hand;
         TabStop = false;
+
+        _fill = new TweenColor(this, Theme.Card);
 
         _toggle = new ToggleSwitch();
         _toggle.CheckedChanged += (_, _) =>
@@ -79,14 +82,14 @@ public sealed class OptionCard : Control
     {
         base.OnMouseEnter(e);
         _hover = true;
-        Invalidate();
+        _fill.Set(Theme.SurfaceHover);
     }
 
     protected override void OnMouseLeave(EventArgs e)
     {
         base.OnMouseLeave(e);
         _hover = false;
-        Invalidate();
+        _fill.Set(Theme.Card);
     }
 
     private int S(int value) => Theme.S(this, value);
@@ -121,7 +124,7 @@ public sealed class OptionCard : Control
         var rect = new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f);
         var radius = S(12);
 
-        Drawing.FillRounded(graphics, rect, radius, _hover ? Theme.SurfaceHover : Theme.Card);
+        Drawing.FillRounded(graphics, rect, radius, _fill.Value);
         Drawing.StrokeRounded(graphics, rect, radius, _hover ? Theme.Border : Theme.BorderSoft);
 
         var textWidth = Width - S(24) - _toggle.Width - S(32);

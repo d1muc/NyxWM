@@ -12,6 +12,7 @@ public sealed class Chip : Control
 {
     private bool _hover;
     private bool _selected;
+    private readonly TweenColor _fill;
 
     public Chip(string value, string label)
     {
@@ -30,6 +31,8 @@ public sealed class Chip : Control
         Text = label;
         Cursor = Cursors.Hand;
         TabStop = false;
+
+        _fill = new TweenColor(this, Theme.Surface);
     }
 
     public string Value { get; }
@@ -41,6 +44,7 @@ public sealed class Chip : Control
         set
         {
             _selected = value;
+            UpdateFill();
             Invalidate();
         }
     }
@@ -60,15 +64,22 @@ public sealed class Chip : Control
     {
         base.OnMouseEnter(e);
         _hover = true;
-        Invalidate();
+        UpdateFill();
     }
 
     protected override void OnMouseLeave(EventArgs e)
     {
         base.OnMouseLeave(e);
         _hover = false;
-        Invalidate();
+        UpdateFill();
     }
+
+    private void UpdateFill() => _fill.Set(TargetFill());
+
+    private Color TargetFill() =>
+        _selected ? Theme.AccentSoft
+        : _hover ? Theme.SurfaceHover
+        : Theme.Surface;
 
     private int S(int value) => Theme.S(this, value);
 
@@ -81,28 +92,9 @@ public sealed class Chip : Control
         var rect = new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f);
         var radius = Height / 2f;
 
-        Color fill;
-        Color border;
-        Color text;
-
-        if (_selected)
-        {
-            fill = Theme.AccentSoft;
-            border = Theme.Accent;
-            text = Theme.Accent;
-        }
-        else if (_hover)
-        {
-            fill = Theme.SurfaceHover;
-            border = Theme.Border;
-            text = Theme.Text;
-        }
-        else
-        {
-            fill = Theme.Surface;
-            border = Theme.Border;
-            text = Theme.Muted;
-        }
+        var fill = _fill.Value;
+        var border = _selected ? Theme.Accent : Theme.Border;
+        var text = _selected ? Theme.Accent : _hover ? Theme.Text : Theme.Muted;
 
         Drawing.FillRounded(graphics, rect, radius, fill);
         Drawing.StrokeRounded(graphics, rect, radius, border);

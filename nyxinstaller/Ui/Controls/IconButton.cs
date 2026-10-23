@@ -11,11 +11,12 @@ public enum IconKind
 }
 
 /// <summary>
-/// Small caption button of the custom title bar.
+/// Small caption button of the custom title bar, with a smooth hover fill.
 /// </summary>
 public sealed class IconButton : Control
 {
     private bool _hover;
+    private readonly TweenColor _fill;
 
     public IconButton(IconKind kind)
     {
@@ -32,6 +33,8 @@ public sealed class IconButton : Control
         Size = new Size(38, 28);
         TabStop = false;
         Cursor = Cursors.Hand;
+
+        _fill = new TweenColor(this, Theme.Background);
     }
 
     public IconKind Kind { get; }
@@ -42,15 +45,22 @@ public sealed class IconButton : Control
     {
         base.OnMouseEnter(e);
         _hover = true;
-        Invalidate();
+        _fill.Set(HoverFill());
     }
 
     protected override void OnMouseLeave(EventArgs e)
     {
         base.OnMouseLeave(e);
         _hover = false;
-        Invalidate();
+        _fill.Set(HoverFill());
     }
+
+    private Color HoverFill() =>
+        _hover
+            ? Kind == IconKind.Close
+                ? Color.FromArgb(220, 72, 77)
+                : Theme.SurfaceHover
+            : Theme.Background;
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -58,13 +68,7 @@ public sealed class IconButton : Control
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
         graphics.Clear(Theme.Background);
 
-        if (_hover)
-        {
-            var fill = Kind == IconKind.Close
-                ? Color.FromArgb(220, 72, 77)
-                : Theme.SurfaceHover;
-            Drawing.FillRounded(graphics, new RectangleF(1f, 1f, Width - 2f, Height - 2f), S(6), fill);
-        }
+        Drawing.FillRounded(graphics, new RectangleF(1f, 1f, Width - 2f, Height - 2f), S(6), _fill.Value);
 
         var glyph = _hover && Kind == IconKind.Close ? Color.White : Theme.Muted;
         using var pen = new Pen(glyph, Math.Max(1f, S(2)));

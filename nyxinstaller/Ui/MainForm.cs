@@ -41,6 +41,8 @@ public sealed class MainForm : Form
 
     private int _index;
     private bool _ready;
+    private int _pageOffset;
+    private readonly string _pageAnimKey = Animator.NextKey();
 
     public MainForm(Localizer localizer)
     {
@@ -102,12 +104,11 @@ public sealed class MainForm : Form
         _advanceTimer.Tick += (_, _) =>
         {
             _advanceTimer.Stop();
-            ShowPage(_index + 1);
+            ShowPage(_index + 1, true);
         };
 
         foreach (var page in _pages)
         {
-            page.Dock = DockStyle.Fill;
             page.Visible = false;
             _contentHost.Controls.Add(page);
         }
@@ -184,7 +185,7 @@ public sealed class MainForm : Form
             titleHeight + headerHeight,
             width,
             Math.Max(0, height - titleHeight - headerHeight - footerHeight));
-        _contentHost.Padding = new Padding(SidePadding, S(4), SidePadding, S(4));
+        LayoutPages();
 
         _dots.UpdateMetrics();
         _dots.Location = new Point(width - SidePadding - _dots.Width, titleHeight + S(38));
@@ -328,7 +329,26 @@ public sealed class MainForm : Form
         Invalidate();
     }
 
-    private void ShowPage(int index)
+    private void LayoutPages()
+    {
+        var width = _contentHost.Width - SidePadding * 2;
+        var height = _contentHost.Height - S(8);
+        if (width <= 0 || height <= 0)
+            return;
+
+        for (var i = 0; i < _pages.Count; i++)
+        {
+            _pages[i].SetBounds(
+                SidePadding + (i == _index ? _pageOffset : 0),
+                S(4),
+                width,
+                height);
+        }
+    }
+
+    private void ShowPage(int index) => ShowPage(index, false);
+
+    private void ShowPage(int index, bool animate)
     {
         if (index < 0 || index >= _pages.Count)
             return;
@@ -343,7 +363,32 @@ public sealed class MainForm : Form
 
         _dots.Current = index;
         UpdateNavigation();
+
+        if (animate)
+            AnimatePageIn();
+        else
+        {
+            _pageOffset = 0;
+            LayoutPages();
+        }
+
         Invalidate();
+    }
+
+    private void AnimatePageIn()
+    {
+        var from = S(36);
+        _pageOffset = from;
+        LayoutPages();
+
+        Animator.Instance.Tween(_pageAnimKey, from, 0, Motion.Page, Easing.EaseOutCubic, value =>
+        {
+            if (IsDisposed || Disposing)
+                return;
+
+            _pageOffset = (int)Math.Round(value);
+            LayoutPages();
+        });
     }
 
     private void UpdateNavigation()
@@ -377,7 +422,7 @@ public sealed class MainForm : Form
     private void GoBack()
     {
         if (_index is > 0 and < 4)
-            ShowPage(_index - 1);
+            ShowPage(_index - 1, true);
     }
 
     private void GoNext()
@@ -389,7 +434,7 @@ public sealed class MainForm : Form
                 return;
             case 4:
                 if (_progressPage.IsComplete)
-                    ShowPage(5);
+                    ShowPage(5, true);
                 return;
             case 3:
                 if (!_configPage.Validate(out _))
@@ -401,14 +446,14 @@ public sealed class MainForm : Form
                 if (!_pages[_index].Validate(out _))
                     return;
 
-                ShowPage(_index + 1);
+                ShowPage(_index + 1, true);
                 return;
         }
     }
 
     private void StartSimulation()
     {
-        ShowPage(4);
+        ShowPage(4, true);
         _progressPage.Begin();
         UpdateNavigation();
     }

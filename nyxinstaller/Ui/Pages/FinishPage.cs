@@ -104,6 +104,12 @@ public sealed class FinishPage : WizardPage
         Relayout();
     }
 
+    public override void OnEnter()
+    {
+        base.OnEnter();
+        _badge.Play();
+    }
+
     private static Label MakeCaption() => new()
     {
         AutoSize = false,

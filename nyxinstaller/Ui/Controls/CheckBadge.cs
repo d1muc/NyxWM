@@ -5,10 +5,13 @@ using System.Windows.Forms;
 namespace NyxInstaller.Ui.Controls;
 
 /// <summary>
-/// Circular check mark shown on the completion page.
+/// Circular check mark shown on the completion page. Pops in once when <see cref="Play"/> is called.
 /// </summary>
 public sealed class CheckBadge : Control
 {
+    private double _progress = 1d;
+    private readonly string _animKey = Animator.NextKey();
+
     public CheckBadge()
     {
         SetStyle(
@@ -25,11 +28,37 @@ public sealed class CheckBadge : Control
 
     private int S(int value) => Theme.S(this, value);
 
+    /// <summary>
+    /// Replays the pop-in animation of the badge.
+    /// </summary>
+    public void Play()
+    {
+        _progress = 0d;
+        Invalidate();
+
+        Animator.Instance.Tween(_animKey, 0d, 1d, Motion.Pop, Easing.EaseOutBack, value =>
+        {
+            if (IsDisposed || Disposing)
+                return;
+
+            _progress = value;
+            Invalidate();
+        });
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         var graphics = e.Graphics;
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
         graphics.Clear(Theme.Background);
+
+        var cx = Width / 2f;
+        var cy = Height / 2f;
+        var scale = 0.55f + 0.45f * (float)_progress;
+
+        graphics.TranslateTransform(cx, cy);
+        graphics.ScaleTransform(scale, scale);
+        graphics.TranslateTransform(-cx, -cy);
 
         var size = Math.Min(Width, Height) - S(2);
         var rect = new RectangleF((Width - size) / 2f, (Height - size) / 2f, size, size);
@@ -41,8 +70,6 @@ public sealed class CheckBadge : Control
         pen.StartCap = LineCap.Round;
         pen.EndCap = LineCap.Round;
 
-        var cx = Width / 2f;
-        var cy = Height / 2f;
         var unit = size / 2f;
 
         graphics.DrawLines(pen, new[]

@@ -6,12 +6,14 @@ using System.Windows.Forms;
 namespace NyxInstaller.Ui.Controls;
 
 /// <summary>
-/// A dark on/off toggle switch.
+/// A dark on/off toggle switch whose knob glides between positions.
 /// </summary>
 public sealed class ToggleSwitch : Control
 {
     private bool _checked;
     private bool _hover;
+    private double _position;
+    private readonly string _knobKey = Animator.NextKey();
 
     public ToggleSwitch()
     {
@@ -40,6 +42,7 @@ public sealed class ToggleSwitch : Control
                 return;
 
             _checked = value;
+            AnimateKnob();
             Invalidate();
             CheckedChanged?.Invoke(this, EventArgs.Empty);
         }
@@ -66,6 +69,27 @@ public sealed class ToggleSwitch : Control
         Invalidate();
     }
 
+    private void AnimateKnob()
+    {
+        var to = _checked ? 1d : 0d;
+
+        if (!IsHandleCreated)
+        {
+            _position = to;
+            return;
+        }
+
+        var from = _position;
+        Animator.Instance.Tween(_knobKey, from, to, Motion.Toggle, Easing.EaseOutCubic, v =>
+        {
+            if (IsDisposed || Disposing)
+                return;
+
+            _position = v;
+            Invalidate();
+        });
+    }
+
     private int S(int value) => Theme.S(this, value);
 
     protected override void OnPaint(PaintEventArgs e)
@@ -83,12 +107,11 @@ public sealed class ToggleSwitch : Control
         Drawing.FillRounded(graphics, trackRect, trackRadius, track);
 
         var knobDiameter = height - S(6);
-        var knobTop = (height - knobDiameter) / 2f;
-        var knobLeft = _checked
-            ? width - knobDiameter - knobTop
-            : knobTop;
+        var knobInset = (height - knobDiameter) / 2f;
+        var travel = width - knobDiameter - knobInset * 2f;
+        var knobLeft = knobInset + (float)(travel * _position);
 
-        var knobRect = new RectangleF(knobLeft, knobTop, knobDiameter, knobDiameter);
+        var knobRect = new RectangleF(knobLeft, knobInset, knobDiameter, knobDiameter);
         using var knobBrush = new SolidBrush(_checked ? Color.White : Theme.Muted);
         graphics.FillEllipse(knobBrush, knobRect);
     }

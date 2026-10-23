@@ -18,6 +18,7 @@ public sealed class DarkTextBox : Control
     private static extern IntPtr SendMessage(IntPtr hWnd, int message, IntPtr wParam, string lParam);
 
     private readonly TextBox _input;
+    private readonly TweenColor _border;
     private string _placeholder = string.Empty;
 
     public DarkTextBox()
@@ -43,11 +44,13 @@ public sealed class DarkTextBox : Control
             TabStop = true
         };
 
+        _border = new TweenColor(this, Theme.Border);
+
         Controls.Add(_input);
         _input.HandleCreated += (_, _) => ApplyPlaceholder();
         _input.TextChanged += (_, _) => OnTextChanged(EventArgs.Empty);
-        _input.GotFocus += (_, _) => Invalidate();
-        _input.LostFocus += (_, _) => Invalidate();
+        _input.GotFocus += (_, _) => OnFocusChanged(true);
+        _input.LostFocus += (_, _) => OnFocusChanged(false);
 
         LayoutInput();
     }
@@ -75,6 +78,12 @@ public sealed class DarkTextBox : Control
     public new void Focus() => _input.Focus();
 
     private int S(int value) => Theme.S(this, value);
+
+    private void OnFocusChanged(bool focused)
+    {
+        _border.Set(focused ? Theme.Accent : Theme.Border, Motion.Focus);
+        Invalidate();
+    }
 
     private void ApplyPlaceholder()
     {
@@ -128,6 +137,6 @@ public sealed class DarkTextBox : Control
         var radius = S(10);
 
         Drawing.FillRounded(graphics, rect, radius, Theme.Surface);
-        Drawing.StrokeRounded(graphics, rect, radius, _input.Focused ? Theme.Accent : Theme.Border);
+        Drawing.StrokeRounded(graphics, rect, radius, _border.Value);
     }
 }

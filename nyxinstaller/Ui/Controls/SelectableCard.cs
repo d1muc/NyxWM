@@ -15,6 +15,7 @@ public sealed class SelectableCard : Control
     private string _title = string.Empty;
     private string _subtitle = string.Empty;
     private string _badge = string.Empty;
+    private readonly TweenColor _fill;
 
     public SelectableCard()
     {
@@ -29,6 +30,8 @@ public sealed class SelectableCard : Control
         Size = new Size(300, 136);
         Cursor = Cursors.Hand;
         TabStop = false;
+
+        _fill = new TweenColor(this, Theme.Card);
     }
 
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -74,6 +77,7 @@ public sealed class SelectableCard : Control
                 return;
 
             _selected = value;
+            UpdateFill();
             Invalidate();
         }
     }
@@ -82,15 +86,22 @@ public sealed class SelectableCard : Control
     {
         base.OnMouseEnter(e);
         _hover = true;
-        Invalidate();
+        UpdateFill();
     }
 
     protected override void OnMouseLeave(EventArgs e)
     {
         base.OnMouseLeave(e);
         _hover = false;
-        Invalidate();
+        UpdateFill();
     }
+
+    private void UpdateFill() => _fill.Set(TargetFill());
+
+    private Color TargetFill() =>
+        _selected ? Blend(Theme.Card, Theme.AccentSoft, 0.55)
+        : _hover ? Theme.SurfaceHover
+        : Theme.Card;
 
     private int S(int value) => Theme.S(this, value);
 
@@ -103,13 +114,7 @@ public sealed class SelectableCard : Control
         var rect = new RectangleF(0.75f, 0.75f, Width - 1.5f, Height - 1.5f);
         var radius = S(14);
 
-        var fill = _selected
-            ? Blend(Theme.Card, Theme.AccentSoft, 0.55)
-            : _hover
-                ? Theme.SurfaceHover
-                : Theme.Card;
-
-        Drawing.FillRounded(graphics, rect, radius, fill);
+        Drawing.FillRounded(graphics, rect, radius, _fill.Value);
         Drawing.StrokeRounded(graphics, rect, radius, _selected ? Theme.Accent : Theme.Border, _selected ? 1.6f : 1f);
 
         if (!string.IsNullOrEmpty(_badge))
@@ -121,7 +126,7 @@ public sealed class SelectableCard : Control
             _title,
             Fonts.Card,
             titleRect,
-            _selected ? Theme.Text : Theme.Text,
+            Theme.Text,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
 
         var subtitleRect = new Rectangle(S(22), S(82), Width - S(44), S(22));
