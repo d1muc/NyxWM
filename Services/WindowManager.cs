@@ -401,10 +401,6 @@ namespace nyxWM
                 Console.WriteLine($"HandleFocusChange: hwnd={hwnd.ToInt64():X} (no title)");
             }
 
-            // Capture the previous state: a pause transition must not be mistaken
-            // for a normal focus change once this handler drops out of game mode.
-            bool wasPaused = _isPaused;
-
             // Check window validity: visible, not minimized, has a title, and not a system window.
             if (!WinApi.IsWindowVisible(hwnd))
                 return;
@@ -489,9 +485,9 @@ namespace nyxWM
                 }
             }
 
-            // While paused nothing else may touch the workspace. Right after leaving
-            // game mode the game window must not be re-centered either.
-            if (_isPaused || wasPaused)
+            // While paused nothing else may touch the workspace. When this event
+            // lifted the pause (alt-tab out of the game), centering runs normally.
+            if (_isPaused)
                 return;
 
             // If auto-center is disabled or we are currently dragging, do nothing.
