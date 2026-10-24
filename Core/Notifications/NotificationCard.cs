@@ -28,6 +28,7 @@ namespace nyxWM
         private readonly float _scale;
         private readonly string _title;
         private readonly string _body;
+        private readonly NotificationTheme _theme;
         private readonly Font _titleFont;
         private readonly Font _bodyFont;
 
@@ -53,18 +54,20 @@ namespace nyxWM
             float startX,
             float startY,
             float targetX,
-            float targetY)
+            float targetY,
+            NotificationTheme theme)
         {
             _title = title ?? string.Empty;
             _body = body ?? string.Empty;
             _scale = scale;
+            _theme = theme;
             LifetimeMs = Math.Max(800, durationMs);
 
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
             ShowInTaskbar = false;
             TopMost = true;
-            BackColor = Color.FromArgb(24, 25, 31);
+            BackColor = _theme.BackgroundTop;
             DoubleBuffered = true;
             SetStyle(
                 ControlStyles.AllPaintingInWmPaint |
@@ -169,13 +172,13 @@ namespace nyxWM
             using (GraphicsPath cardPath = CreateRoundedPath(cardRect, BaseRadius * _scale))
             using (var fill = new LinearGradientBrush(
                        cardRect,
-                       Color.FromArgb(27, 29, 36),
-                       Color.FromArgb(16, 17, 22),
+                       _theme.BackgroundTop,
+                       _theme.BackgroundBottom,
                        LinearGradientMode.Vertical))
             {
                 graphics.FillPath(fill, cardPath);
 
-                using var border = new Pen(Color.FromArgb(46, 255, 255, 255), MathF.Max(1f, _scale));
+                using var border = new Pen(_theme.Border, MathF.Max(1f, _scale));
                 graphics.DrawPath(border, cardPath);
             }
 
@@ -195,11 +198,11 @@ namespace nyxWM
                 barHeight);
 
             using GraphicsPath barPath = CreateRoundedPath(barRect, barWidth / 2f);
-            using var accent = new SolidBrush(Color.FromArgb(255, 108, 180, 255));
+            using var accent = new SolidBrush(_theme.Accent);
             graphics.FillPath(accent, barPath);
 
             float glowSize = 10f * _scale;
-            using var glow = new SolidBrush(Color.FromArgb(36, 108, 180, 255));
+            using var glow = new SolidBrush(Color.FromArgb(36, _theme.Accent));
             graphics.FillEllipse(
                 glow,
                 14f * _scale - glowSize / 2f + barWidth / 2f,
@@ -260,7 +263,7 @@ namespace nyxWM
                 available * progress,
                 MathF.Max(1.5f, _scale));
 
-            using var brush = new SolidBrush(Color.FromArgb(120, 108, 180, 255));
+            using var brush = new SolidBrush(Color.FromArgb(120, _theme.Accent));
             graphics.FillRectangle(brush, barRect);
         }
 

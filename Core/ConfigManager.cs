@@ -39,6 +39,42 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Reads the "Theme" value straight from config.jsonc so a theme change
+        /// applies to the next notification without restarting the process.
+        /// Falls back to the in-memory setting, then to Blue, on any failure.
+        /// </summary>
+        public static string GetLiveTheme()
+        {
+            string fallback = _settings?.Theme ?? "Blue";
+
+            try
+            {
+                if (!File.Exists(ConfigFilePath))
+                    return fallback;
+
+                var options = new JsonSerializerOptions
+                {
+                    ReadCommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true
+                };
+
+                var probe = JsonSerializer.Deserialize<ThemeProbe>(
+                    File.ReadAllText(ConfigFilePath),
+                    options);
+
+                if (probe?.Theme == null || !NotificationThemeResolver.IsKnown(probe.Theme))
+                    return fallback;
+
+                return probe.Theme;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error reading theme from config: {ex.Message}");
+                return fallback;
+            }
+        }
+
+        /// <summary>
         /// Loads configuration from config.jsonc.
         /// If the file is missing, creates the config directory and writes a default config file.
         /// If the file is invalid or missing required fields, returns default settings (and may overwrite the file with defaults?).
@@ -125,6 +161,7 @@ namespace nyxWM
                 AutoCenterOnFocusDefault = true,
                 PauseOnFullscreen = true,
                 MainMod = "CONTROL+ALT",
+                Theme = "Blue",
                 CameraMoveButton = "MBUTTON",
                 IgnoredWindowClassNames = new[] { "Shell_TrayWnd", "Progman", "WorkerW", "CEF-OSC-WIDGET", "NvOverlayWindow" },
                 Hotkeys = new HotkeySettings
@@ -170,6 +207,20 @@ namespace nyxWM
             {
                 Console.WriteLine("MainMod is empty. Using default CONTROL+ALT.");
                 settings.MainMod = "CONTROL+ALT";
+                changed = true;
+            }
+
+            // Theme: notification accent palette. Unknown names fall back to Blue.
+            if (string.IsNullOrWhiteSpace(settings.Theme))
+            {
+                Console.WriteLine("Theme is empty. Using default Blue.");
+                settings.Theme = "Blue";
+                changed = true;
+            }
+            else if (!NotificationThemeResolver.IsKnown(settings.Theme))
+            {
+                Console.WriteLine($"Invalid theme: {settings.Theme}. Using default Blue.");
+                settings.Theme = "Blue";
                 changed = true;
             }
 
@@ -468,6 +519,14 @@ namespace nyxWM
     }
 
     /// <summary>
+    /// Minimal probe used to read only the Theme value without reloading the whole config.
+    /// </summary>
+    internal sealed class ThemeProbe
+    {
+        public string? Theme { get; set; }
+    }
+
+    /// <summary>
     /// Represents the application configuration settings.
     /// </summary>
     public class ConfigSettings
@@ -496,6 +555,12 @@ namespace nyxWM
         /// The main modifier string (e.g., "CONTROL+ALT") that is replaced in hotkey strings.
         /// </summary>
         public string MainMod { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Accent theme for notifications: Blue (default), Purple, White, Green,
+        /// Cyan, Orange, Red or Yellow.
+        /// </summary>
+        public string? Theme { get; set; }
 
         /// <summary>
         /// The button or key combination used to move the camera (e.g., "MBUTTON", "ALT+LEFT").

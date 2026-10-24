@@ -82,6 +82,7 @@ namespace nyxWM
             _position = ResolvePosition();
 
             float scale = _dpiScale;
+            NotificationTheme theme = NotificationThemeResolver.Resolve(ConfigManager.GetLiveTheme());
             Rectangle work = Screen.PrimaryScreen?.WorkingArea
                              ?? new Rectangle(0, 0, 1920, 1080);
             Size size = NotificationCard.Measure(scale);
@@ -100,7 +101,8 @@ namespace nyxWM
                 targetX,
                 startY,
                 targetX,
-                targetY);
+                targetY,
+                theme);
 
             Cards.Insert(0, card);
             card.Show();
