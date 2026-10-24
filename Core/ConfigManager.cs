@@ -134,6 +134,12 @@ namespace nyxWM
                     CloseWindow = "mainmod + c",
                     CenterActiveWindow = "mainmod + f",
                     ToggleGameMode = "mainmod + g"
+                },
+                Notifications = new NotificationSettings
+                {
+                    Enabled = true,
+                    Position = "TopCenter",
+                    DurationMs = 3200
                 }
             };
         }
@@ -278,6 +284,30 @@ namespace nyxWM
                 }
 
                 settings.LaunchApps = validated;
+            }
+
+            // Validate notifications: null section, unknown anchor and out-of-range duration.
+            if (settings.Notifications == null)
+            {
+                Console.WriteLine("Notifications section missing. Using defaults.");
+                settings.Notifications = new NotificationSettings();
+                changed = true;
+            }
+            else
+            {
+                if (!NotificationPositionParser.TryParse(settings.Notifications.Position, out _))
+                {
+                    Console.WriteLine($"Invalid notification position: {settings.Notifications.Position}. Using default TopCenter.");
+                    settings.Notifications.Position = "TopCenter";
+                    changed = true;
+                }
+
+                if (settings.Notifications.DurationMs < 800 || settings.Notifications.DurationMs > 20000)
+                {
+                    Console.WriteLine($"Invalid notification duration: {settings.Notifications.DurationMs}. Using default 3200.");
+                    settings.Notifications.DurationMs = 3200;
+                    changed = true;
+                }
             }
 
             if (changed)
@@ -493,6 +523,12 @@ namespace nyxWM
         /// values are executable or document paths (can also be a URL).
         /// </summary>
         public Dictionary<string, string> LaunchApps { get; set; } = new Dictionary<string, string>();
+
+        /// <summary>
+        /// Notification behaviour: enable/disable, stack anchor and display duration.
+        /// Null until validated so missing sections are written back to config.jsonc.
+        /// </summary>
+        public NotificationSettings? Notifications { get; set; }
     }
 
     /// <summary>

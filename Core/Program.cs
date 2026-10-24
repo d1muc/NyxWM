@@ -38,6 +38,9 @@ namespace nyxWM
             var mouseHook = new MouseHook(ConfigManager.Current.CameraMoveButton, ConfigManager.Current.MainMod);
             var windowManager = new WindowManager(mouseHook);
 
+            // Notifications are suppressed while game mode (pause) is active.
+            NotificationService.Initialize(() => windowManager.IsPaused);
+
             // Get monitor refresh rate for timer setup
             int fallbackRefreshRate = ConfigManager.Current.FallbackRefreshRate;
             int refreshRate = MonitorUtils.GetPrimaryMonitorRefreshRate(fallbackRefreshRate);
@@ -97,6 +100,7 @@ namespace nyxWM
                 }
                 RegisteredHotkeyIds.Clear();
 
+                NotificationService.Shutdown();
                 renderTimer?.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -140,6 +144,7 @@ namespace nyxWM
                 }
                 RegisteredHotkeyIds.Clear();
 
+                NotificationService.Shutdown();
                 renderTimer?.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -478,35 +483,56 @@ namespace nyxWM
                 if (wParam == 0x0000) // Reset camera
                 {
                     _windowManager.ResetCamera();
+                    NotificationService.Show("Camera", "Reset to origin");
                     return true; // Message handled
                 }
                 else if (wParam == 0x0001) // Toggle auto-center-on-focus
                 {
                     _windowManager.ToggleAutoCenter();
+                    NotificationService.Show(
+                        "Auto-center",
+                        _windowManager.AutoCenterOnFocus ? "Enabled" : "Disabled");
                     return true; // Message handled
                 }
                 else if (wParam == Program.HOTKEY_ID_CLOSE_WINDOW) // Close window
                 {
                     _windowManager.CloseActiveWindow();
+                    NotificationService.Show("Window", "Closed");
                     return true; // Message handled
                 }
                 else if (wParam == Program.HOTKEY_ID_CENTER_WINDOW) // Center active window
                 {
                     _windowManager.CenterActiveWindow();
+                    NotificationService.Show("Window", "Centered");
                     return true; // Message handled
                 }
                 else if (wParam == Program.HOTKEY_ID_GAME_MODE) // Toggle game mode
                 {
+                    // Game mode never shows a notification; the manager also hides existing ones.
                     _windowManager.ToggleGameMode();
                     return true; // Message handled
                 }
-                else if (Program.LaunchAppPaths.TryGetValue(wParam, out string launchPath)) // Launch a configured program
+                else if (Program.LaunchAppPaths.TryGetValue(wParam, out string? launchPath) && launchPath != null) // Launch a configured program
                 {
                     Program.LaunchApplication(launchPath);
+                    NotificationService.Show("Launching", GetLaunchDisplayName(launchPath));
                     return true; // Message handled
                 }
             }
             return false; // Message not handled
+        }
+
+        private static string GetLaunchDisplayName(string path)
+        {
+            try
+            {
+                string name = Path.GetFileName(path);
+                return string.IsNullOrWhiteSpace(name) ? path : name;
+            }
+            catch (ArgumentException)
+            {
+                return path;
+            }
         }
     }
 }
