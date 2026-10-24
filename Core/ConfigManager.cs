@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Text.Json;
-using System.Text.Encodings.Web;
 
 namespace nyxWM
 {
@@ -76,9 +75,8 @@ namespace nyxWM
 
         /// <summary>
         /// Loads configuration from config.jsonc.
-        /// If the file is missing, creates the config directory and writes a default config file.
-        /// If the file is invalid or missing required fields, returns default settings (and may overwrite the file with defaults?).
-        /// For missing file, we create the default file on disk.
+        /// If the file is missing, creates the config directory and writes the documented default file.
+        /// Invalid or missing values are corrected in memory only; the file is left untouched.
         /// </summary>
         /// <returns>The loaded configuration settings.</returns>
         private static ConfigSettings LoadSettings()
@@ -88,17 +86,8 @@ namespace nyxWM
                 if (!File.Exists(ConfigFilePath))
                 {
                     Console.WriteLine($"Configuration file not found at {ConfigFilePath}. Creating default configuration.");
-                    // Ensure the config directory exists
-                    string configDir = Path.GetDirectoryName(ConfigFilePath)!;
-                    if (!Directory.Exists(configDir))
-                    {
-                        Directory.CreateDirectory(configDir);
-                    }
-
-                    // Create and save default settings
-                    var defaultSettings = CreateDefaultSettings();
-                    SaveSettings(defaultSettings);
-                    return defaultSettings;
+                    WriteDefaultConfigFile();
+                    return CreateDefaultSettings();
                 }
 
                 var options = new JsonSerializerOptions
@@ -129,23 +118,25 @@ namespace nyxWM
         }
 
         /// <summary>
-        /// Saves the given settings to the config file.
+        /// Writes the documented default config to disk when no config exists.
+        /// The template keeps its comments so the file documents itself.
+        /// Existing files are never touched, so user comments survive.
         /// </summary>
-        private static void SaveSettings(ConfigSettings settings)
+        private static void WriteDefaultConfigFile()
         {
             try
             {
-                var options = new JsonSerializerOptions
+                string configDir = Path.GetDirectoryName(ConfigFilePath)!;
+                if (!Directory.Exists(configDir))
                 {
-                    WriteIndented = true,
-                    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-                };
-                string json = JsonSerializer.Serialize(settings, options);
-                File.WriteAllText(ConfigFilePath, json);
+                    Directory.CreateDirectory(configDir);
+                }
+
+                File.WriteAllText(ConfigFilePath, ConfigTemplate.Json);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error saving configuration: {ex.Message}");
+                Console.WriteLine($"Error writing default configuration: {ex.Message}");
             }
         }
 
@@ -363,9 +354,9 @@ namespace nyxWM
 
             if (changed)
             {
-                Console.WriteLine("Applied default values for invalid or missing configuration settings.");
-                // Optionally save the corrected settings back to file.
-                SaveSettings(settings);
+                // Apply in memory only: rewriting the file would erase the comments
+                // that document each option.
+                Console.WriteLine("Applied default values for invalid or missing configuration settings (in memory). Edit config.jsonc to persist them.");
             }
         }
 
