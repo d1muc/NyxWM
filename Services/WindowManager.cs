@@ -84,6 +84,12 @@ namespace nyxWM
         public bool AutoCenterOnFocus { get; set; }
 
         /// <summary>
+        /// Raised when game mode is entered (true) or left (false). Lets the host
+        /// suspend background components that are not needed during gameplay.
+        /// </summary>
+        public event Action<bool>? PauseChanged;
+
+        /// <summary>
         /// Gets whether the window manager is paused (game mode).
         /// </summary>
         public bool IsPaused => _isPaused;
@@ -395,9 +401,9 @@ namespace nyxWM
                 Console.WriteLine($"HandleFocusChange: hwnd={hwnd.ToInt64():X} (no title)");
             }
 
-            // If auto-center is disabled or we are currently dragging, do nothing.
-            if (!AutoCenterOnFocus || isDragging)
-                return;
+            // Capture the previous state: a pause transition must not be mistaken
+            // for a normal focus change once this handler drops out of game mode.
+            bool wasPaused = _isPaused;
 
             // Check window validity: visible, not minimized, has a title, and not a system window.
             if (!WinApi.IsWindowVisible(hwnd))
@@ -455,8 +461,7 @@ namespace nyxWM
                             // Activate pause
                             if (!_isPaused)
                             {
-                                _isPaused = true;
-                                _mouseHook?.Stop();
+                                ApplyPause(true);
                                 // Automatically cache the game for future detection
                                 if (!string.IsNullOrEmpty(exePath))
                                 {
@@ -469,8 +474,7 @@ namespace nyxWM
                             // Deactivate pause if we were paused
                             if (_isPaused)
                             {
-                                _isPaused = false;
-                                _mouseHook?.Start();
+                                ApplyPause(false);
                             }
                         }
                     }
@@ -479,12 +483,20 @@ namespace nyxWM
                         // Failed to get window rect: ensure unpause
                         if (_isPaused)
                         {
-                            _isPaused = false;
-                            _mouseHook?.Start();
+                            ApplyPause(false);
                         }
                     }
                 }
             }
+
+            // While paused nothing else may touch the workspace. Right after leaving
+            // game mode the game window must not be re-centered either.
+            if (_isPaused || wasPaused)
+                return;
+
+            // If auto-center is disabled or we are currently dragging, do nothing.
+            if (!AutoCenterOnFocus || isDragging)
+                return;
 
             // Refresh the positions of the managed windows from the cached handle list
             // (a full EnumWindows sweep only happens when the cache was invalidated).
@@ -579,7 +591,10 @@ namespace nyxWM
             lock (_motionLock)
             {
                 isDragging = false;
-                ConsumeRawMovement();
+                // The release must never warp the physical cursor: re-anchoring is
+                // only meaningful while the gesture is still running, otherwise the
+                // pointer jumps back to where the bind was first pressed.
+                ConsumeRawMovement(anchorCursor: false);
             }
         }
 
@@ -602,8 +617,7 @@ namespace nyxWM
         {
             if (!_isPaused)
             {
-                _isPaused = true;
-                _mouseHook?.SetEnabled(false);
+                ApplyPause(true);
                 Console.WriteLine("Game mode activated (paused).");
             }
             // If already paused, do nothing.
@@ -626,15 +640,56 @@ namespace nyxWM
         }
 
         /// <summary>
-        /// Sets the pause state and manages the mouse hook accordingly.
-        /// When paused, disables filtering but keeps the hook active.
-        /// When unpaused, enables filtering.
+        /// Sets the pause state and manages the input sources accordingly.
+        /// In game mode every input path is torn down rather than merely muted:
+        /// the low-level hooks are uninstalled and raw-input registration is
+        /// dropped, so nothing of ours sits in the input chain.
         /// </summary>
         /// <param name="pause">True to pause, false to unpause</param>
         public void SetPause(bool pause)
         {
+            ApplyPause(pause);
+        }
+
+        /// <summary>
+        /// Applies a game-mode transition and notifies listeners on change.
+        /// </summary>
+        private void ApplyPause(bool pause)
+        {
+            if (_isPaused == pause)
+                return;
+
             _isPaused = pause;
-            _mouseHook?.SetEnabled(!pause);
+
+            if (pause)
+            {
+                // End any drag first so the state machine cannot keep running
+                // while the game owns the input devices.
+                lock (_motionLock)
+                {
+                    isDragging = false;
+                }
+
+                _mouseHook?.Stop();
+                _rawInput.Suspend();
+
+                // Drop the residual drag offset so the workspace does not slide
+                // when game mode ends.
+                lock (_motionLock)
+                {
+                    targetDx = currentDx;
+                    targetDy = currentDy;
+                    _isAnimating = false;
+                }
+            }
+            else
+            {
+                _rawInput.Resume();
+                _rawInput.Flush();
+                _mouseHook?.Start();
+            }
+
+            PauseChanged?.Invoke(pause);
         }
 
         /// <summary>
@@ -835,7 +890,7 @@ namespace nyxWM
         /// accumulated in float and scaled once, so no movement is lost to integer
         /// truncation and the OS pointer acceleration curve does not apply.
         /// </summary>
-        private void ConsumeRawMovement()
+        private void ConsumeRawMovement(bool anchorCursor = true)
         {
             if (!_rawInput.IsReady)
                 return;
@@ -847,7 +902,8 @@ namespace nyxWM
             targetDx += rawX * scale;
             targetDy += rawY * scale;
 
-            KeepCursorAnchored();
+            if (anchorCursor)
+                KeepCursorAnchored();
         }
 
         /// <summary>

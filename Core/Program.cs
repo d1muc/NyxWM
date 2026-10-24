@@ -15,6 +15,7 @@ namespace nyxWM
         internal const int HOTKEY_ID_CLOSE_WINDOW = 0x0003;
         internal const int HOTKEY_ID_CENTER_WINDOW = 0x0004;
         internal const int HOTKEY_ID_GAME_MODE = 0x0005;
+        internal const int HOTKEY_ID_LAUNCHER = 0x0006;
         internal const int HOTKEY_ID_LAUNCH_APP_BASE = 0x1000;
         internal const int WM_HOTKEY = 0x0312;
 
@@ -45,6 +46,7 @@ namespace nyxWM
 
             // Notifications are suppressed while game mode (pause) is active.
             NotificationService.Initialize(() => windowManager.IsPaused);
+            LauncherService.Initialize(() => windowManager.IsPaused);
 
             // Get monitor refresh rate for timer setup
             int fallbackRefreshRate = ConfigManager.Current.FallbackRefreshRate;
@@ -106,6 +108,7 @@ namespace nyxWM
                 RegisteredHotkeyIds.Clear();
 
                 NotificationService.Shutdown();
+                LauncherService.Shutdown();
                 renderTimer?.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -122,6 +125,20 @@ namespace nyxWM
                 lastTimestamp = currentTimestamp;
                 windowManager.UpdatePosition(deltaTime);
             }, intervalMs);
+
+            // Game mode must leave as little running as possible: the render thread
+            // (busy-spin at monitor refresh rate) and the notification ticker are
+            // both suspended until the pause is lifted.
+            windowManager.PauseChanged += paused =>
+            {
+                if (paused)
+                    renderTimer?.Stop();
+                else
+                    renderTimer?.Start();
+
+                NotificationService.SetSuspended(paused);
+            };
+
             renderTimer.Start(); // Start timer immediately and keep it running
 
             // Subscribe to mouse hook events
@@ -150,6 +167,7 @@ namespace nyxWM
                 RegisteredHotkeyIds.Clear();
 
                 NotificationService.Shutdown();
+                LauncherService.Shutdown();
                 renderTimer?.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -253,6 +271,23 @@ namespace nyxWM
             else
             {
                 Console.WriteLine("Failed to register toggle game mode hotkey.");
+            }
+
+            // Toggle quick-action launcher hotkey
+            uint launcherModifiers;
+            uint launcherKey;
+            if (!ParseHotkeyString(config.Hotkeys.ToggleLauncher, mainmod, out launcherModifiers, out launcherKey))
+            {
+                Console.WriteLine("Invalid toggle launcher hotkey in config. Using default.");
+                ParseHotkeyString("mainmod + d", mainmod, out launcherModifiers, out launcherKey);
+            }
+            if (RegisterHotKey(IntPtr.Zero, HOTKEY_ID_LAUNCHER, launcherModifiers, launcherKey))
+            {
+                RegisteredHotkeyIds.Add(HOTKEY_ID_LAUNCHER);
+            }
+            else
+            {
+                Console.WriteLine("Failed to register toggle launcher hotkey.");
             }
 
             // Register launch app hotkeys
@@ -515,6 +550,11 @@ namespace nyxWM
                 {
                     // Game mode never shows a notification; the manager also hides existing ones.
                     _windowManager.ToggleGameMode();
+                    return true; // Message handled
+                }
+                else if (wParam == Program.HOTKEY_ID_LAUNCHER) // Toggle quick-action panel
+                {
+                    LauncherService.Toggle();
                     return true; // Message handled
                 }
                 else if (Program.LaunchAppPaths.TryGetValue(wParam, out string? launchPath) && launchPath != null) // Launch a configured program

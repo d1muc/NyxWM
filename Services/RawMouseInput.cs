@@ -110,19 +110,7 @@ namespace nyxWM
             try
             {
                 _window = new MessageWindow(OnRawMessage);
-                _registered = RegisterRawInputDevices(
-                    new[]
-                    {
-                        new RAWINPUTDEVICE
-                        {
-                            usUsagePage = 0x01, // Generic desktop controls
-                            usUsage = 0x02,     // Mouse
-                            dwFlags = RIDEV_INPUTSINK,
-                            hwndTarget = _window.Handle
-                        }
-                    },
-                    1,
-                    (uint)Marshal.SizeOf<RAWINPUTDEVICE>());
+                _registered = RegisterDevice();
             }
             catch (Exception ex)
             {
@@ -135,6 +123,86 @@ namespace nyxWM
                 _window.Dispose();
                 _window = null;
             }
+        }
+
+        private bool RegisterDevice()
+        {
+            return RegisterRawInputDevices(
+                new[]
+                {
+                    new RAWINPUTDEVICE
+                    {
+                        usUsagePage = 0x01, // Generic desktop controls
+                        usUsage = 0x02,     // Mouse
+                        dwFlags = RIDEV_INPUTSINK,
+                        hwndTarget = _window!.Handle
+                    }
+                },
+                1,
+                (uint)Marshal.SizeOf<RAWINPUTDEVICE>());
+        }
+
+        private void UnregisterDevice()
+        {
+            if (!_registered)
+                return;
+
+            try
+            {
+                RegisterRawInputDevices(
+                    new[]
+                    {
+                        new RAWINPUTDEVICE
+                        {
+                            usUsagePage = 0x01,
+                            usUsage = 0x02,
+                            dwFlags = RIDEV_REMOVE,
+                            hwndTarget = IntPtr.Zero
+                        }
+                    },
+                    1,
+                    (uint)Marshal.SizeOf<RAWINPUTDEVICE>());
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to unregister raw input: {ex.Message}");
+            }
+
+            _registered = false;
+        }
+
+        /// <summary>
+        /// Stops receiving WM_INPUT while keeping the message window alive.
+        /// Used in game mode so the process does not sit in the raw-input path.
+        /// </summary>
+        internal void Suspend()
+        {
+            if (_disposed)
+                return;
+
+            UnregisterDevice();
+            Flush();
+        }
+
+        /// <summary>
+        /// Re-registers for WM_INPUT after <see cref="Suspend"/>.
+        /// </summary>
+        internal void Resume()
+        {
+            if (_disposed || _registered || _window == null)
+                return;
+
+            try
+            {
+                _registered = RegisterDevice();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to re-register raw input: {ex.Message}");
+                _registered = false;
+            }
+
+            Flush();
         }
 
         /// <summary>True when WM_INPUT is delivering movement for this process.</summary>
@@ -262,31 +330,7 @@ namespace nyxWM
 
             _disposed = true;
 
-            if (_registered)
-            {
-                try
-                {
-                    RegisterRawInputDevices(
-                        new[]
-                        {
-                            new RAWINPUTDEVICE
-                            {
-                                usUsagePage = 0x01,
-                                usUsage = 0x02,
-                                dwFlags = RIDEV_REMOVE,
-                                hwndTarget = IntPtr.Zero
-                            }
-                        },
-                        1,
-                        (uint)Marshal.SizeOf<RAWINPUTDEVICE>());
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Failed to unregister raw input: {ex.Message}");
-                }
-
-                _registered = false;
-            }
+            UnregisterDevice();
 
             _window?.Dispose();
             _window = null;

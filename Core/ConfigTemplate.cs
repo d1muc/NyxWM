@@ -78,7 +78,9 @@ namespace nyxWM
     // Center the focused window on screen.
     "CenterActiveWindow": "mainmod + f",
     // Toggle game mode (pause nyxWM).
-    "ToggleGameMode": "mainmod + g"
+    "ToggleGameMode": "mainmod + g",
+    // Show or hide the quick-action panel (settings, search, terminal).
+    "ToggleLauncher": "mainmod + d"
   },
 
   // Extra hotkeys that launch programs, documents or URLs.

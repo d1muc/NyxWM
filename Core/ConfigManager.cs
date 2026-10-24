@@ -162,7 +162,8 @@ namespace nyxWM
                     ToggleAutoCenter = "mainmod + t",
                     CloseWindow = "mainmod + c",
                     CenterActiveWindow = "mainmod + f",
-                    ToggleGameMode = "mainmod + g"
+                    ToggleGameMode = "mainmod + g",
+                    ToggleLauncher = "mainmod + d"
                 },
                 Notifications = new NotificationSettings
                 {
@@ -239,7 +240,8 @@ namespace nyxWM
                     ResetCamera = "mainmod + space",
                     ToggleAutoCenter = "mainmod + t",
                     CloseWindow = "mainmod + c",
-                    CenterActiveWindow = "mainmod + f"
+                    CenterActiveWindow = "mainmod + f",
+                    ToggleLauncher = "mainmod + d"
                 };
                 changed = true;
             }
@@ -279,6 +281,13 @@ namespace nyxWM
                 {
                     Console.WriteLine($"Invalid toggleGameMode hotkey: {settings.Hotkeys.ToggleGameMode}. Using default.");
                     settings.Hotkeys.ToggleGameMode = "mainmod + g";
+                    changed = true;
+                }
+
+                if (!IsValidHotkeyString(settings.Hotkeys.ToggleLauncher, settings.MainMod))
+                {
+                    Console.WriteLine($"Invalid toggleLauncher hotkey: {settings.Hotkeys.ToggleLauncher}. Using default.");
+                    settings.Hotkeys.ToggleLauncher = "mainmod + d";
                     changed = true;
                 }
 
@@ -623,5 +632,10 @@ namespace nyxWM
         /// Hotkey for toggling game mode (pause) for anti-cheat purposes.
         /// </summary>
         public string ToggleGameMode { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Hotkey for showing or hiding the quick-action launcher panel.
+        /// </summary>
+        public string ToggleLauncher { get; set; } = string.Empty;
     }
 }

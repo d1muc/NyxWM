@@ -61,6 +61,27 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Stops or resumes the notification ticker. Game mode suspends it so the
+        /// UI thread is not woken every 15 ms while a game is running.
+        /// </summary>
+        internal static void SetSuspended(bool suspended)
+        {
+            if (!_initialized || _timer == null)
+                return;
+
+            if (suspended)
+            {
+                CloseAllCards();
+                _timer.Stop();
+                return;
+            }
+
+            _startupDelayMs = 0f;
+            _lastTickMs = _clock?.Elapsed.TotalMilliseconds ?? 0.0;
+            _timer.Start();
+        }
+
+        /// <summary>
         /// Queues a notification. Silently ignored when notifications are disabled
         /// in config or when game mode is active.
         /// </summary>

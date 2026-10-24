@@ -42,7 +42,7 @@ namespace nyxWM
         private readonly HashSet<int> _pressedKeys = new HashSet<int>();
         private readonly string _mainmod;
         private bool _isDragging = false;
-        private bool _isEnabled = true;
+        private volatile bool _isEnabled = true;
 
         // Virtual keys whose button-down/key-down was swallowed by the hook.
         // Their matching release must be swallowed too, otherwise the target
@@ -165,6 +165,12 @@ namespace nyxWM
         {
             if (nCode >= 0)
             {
+                // While disabled (game mode) the hook must not track keys or start
+                // drags: swallowing/processing input during a game is exactly what
+                // we are trying to avoid.
+                if (!_isEnabled)
+                    return WinApi.CallNextHookEx(hMouseHook, nCode, wParam, lParam);
+
                 uint message = (uint)wParam.ToInt32();
 
                 // Handle mouse button events
@@ -309,6 +315,10 @@ namespace nyxWM
         {
             if (nCode >= 0)
             {
+                // Disabled during game mode: pass everything through untouched.
+                if (!_isEnabled)
+                    return WinApi.CallNextHookEx(hKeyboardHook, nCode, wParam, lParam);
+
                 uint message = (uint)wParam.ToInt32();
 
                 // Handle keyboard events

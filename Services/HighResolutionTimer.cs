@@ -10,18 +10,17 @@ namespace nyxWM
     /// </summary>
     public class HighResolutionTimer : IDisposable
     {
-        private readonly Thread _timerThread;
         private readonly Action _callback;
         private readonly int _targetIntervalMs;
         private volatile bool _running;
         private readonly object _lock = new();
+        private Thread? _timerThread;
         private bool _disposed;
 
         public HighResolutionTimer(Action callback, int targetIntervalMs)
         {
             _callback = callback ?? throw new ArgumentNullException(nameof(callback));
             _targetIntervalMs = Math.Max(1, targetIntervalMs); // Minimum 1ms interval
-            _timerThread = new Thread(TimerLoop) { IsBackground = true };
         }
 
         public void Start()
@@ -30,20 +29,25 @@ namespace nyxWM
             {
                 if (_running) return;
                 _running = true;
+                // A stopped thread cannot be started again, so a fresh one is
+                // created for every resume (e.g. after game mode ends).
+                _timerThread = new Thread(TimerLoop) { IsBackground = true };
                 _timerThread.Start();
             }
         }
 
         public void Stop()
         {
+            Thread? thread;
             lock (_lock)
             {
                 if (!_running) return;
                 _running = false;
+                thread = _timerThread;
                 Monitor.Pulse(_lock); // Wake up the thread if it's waiting
             }
 
-            _timerThread.Join(); // Wait for thread to finish
+            thread?.Join(); // Wait for thread to finish
         }
 
         private void TimerLoop()
