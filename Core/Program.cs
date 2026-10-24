@@ -142,8 +142,18 @@ namespace nyxWM
             renderTimer.Start(); // Start timer immediately and keep it running
 
             // Subscribe to mouse hook events
-            mouseHook.OnDragStart += () => windowManager.StartDragging();
-            mouseHook.OnDragStop += () => windowManager.StopDragging();
+            mouseHook.OnDragStart += () =>
+            {
+                if (mouseHook.IsMouseButtonBind)
+                    CursorHider.Hide();
+
+                windowManager.StartDragging();
+            };
+            mouseHook.OnDragStop += () =>
+            {
+                windowManager.StopDragging();
+                CursorHider.Show();
+            };
 
             // Register hotkeys from configuration
             RegisterConfiguredHotkeys();
@@ -171,6 +181,9 @@ namespace nyxWM
                 renderTimer?.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
+
+            // Never leave the desktop without a pointer if the process ends mid-gesture.
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => CursorHider.Show();
 
             // Run the application message loop
             Application.Run();

@@ -50,6 +50,12 @@ namespace nyxWM
         private int _blockedMouseVk;
         private int _blockedKeyVk;
 
+        /// <summary>
+        /// True when the configured camera bind includes a mouse button.
+        /// Used to hide the pointer only for mouse-driven camera movement.
+        /// </summary>
+        public bool IsMouseButtonBind { get; private set; }
+
         public MouseHook(string cameraMoveButton, string mainmod)
         {
             _mainmod = mainmod;
@@ -72,6 +78,7 @@ namespace nyxWM
 
             // Clear existing required keys
             _requiredKeys.Clear();
+            IsMouseButtonBind = false;
 
             // Convert each part to virtual key codes
             foreach (string part in parts)
@@ -84,8 +91,20 @@ namespace nyxWM
                 if (vkCode != 0)
                 {
                     _requiredKeys.Add(vkCode);
+
+                    if (IsMouseButtonKey(vkCode))
+                        IsMouseButtonBind = true;
                 }
             }
+        }
+
+        private static bool IsMouseButtonKey(int vkCode)
+        {
+            return vkCode == WinApi.VK_LBUTTON ||
+                   vkCode == WinApi.VK_RBUTTON ||
+                   vkCode == WinApi.VK_MBUTTON ||
+                   vkCode == WinApi.VK_XBUTTON1 ||
+                   vkCode == WinApi.VK_XBUTTON2;
         }
 
         private int GetVirtualKeyCode(string key)
