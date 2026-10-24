@@ -34,9 +34,14 @@ namespace nyxWM
         [STAThread]
         static void Main(string[] args)
         {
+                        // Raw input is the primary movement source: it bypasses the system pointer
+            // acceleration curve and the cursor warp. WindowManager falls back to cursor
+            // polling on its own when registration failed.
+            using var rawMouse = new RawMouseInput(RawMouseInput.ReadCursorSpeedNormalization());
+
             // Initialize mouse hook and window manager
             var mouseHook = new MouseHook(ConfigManager.Current.CameraMoveButton, ConfigManager.Current.MainMod);
-            var windowManager = new WindowManager(mouseHook);
+            var windowManager = new WindowManager(mouseHook, rawMouse);
 
             // Notifications are suppressed while game mode (pause) is active.
             NotificationService.Initialize(() => windowManager.IsPaused);

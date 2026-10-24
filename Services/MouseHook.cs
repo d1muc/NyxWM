@@ -44,6 +44,12 @@ namespace nyxWM
         private bool _isDragging = false;
         private bool _isEnabled = true;
 
+        // Virtual keys whose button-down/key-down was swallowed by the hook.
+        // Their matching release must be swallowed too, otherwise the target
+        // application receives an orphan up-event (context menu, stray click).
+        private int _blockedMouseVk;
+        private int _blockedKeyVk;
+
         public MouseHook(string cameraMoveButton, string mainmod)
         {
             _mainmod = mainmod;
@@ -198,11 +204,26 @@ namespace nyxWM
                 }
 
                 // Determine if we should block this event
+                int eventVk = ResolveVkCode(message, lParam);
+                bool isRelease = IsReleaseMessage(message);
                 bool shouldBlock = _isEnabled && _isDragging && IsEventBlockedByCurrentState(message, lParam);
 
                 // If we should block, return non-zero to prevent the event from reaching the system
                 if (shouldBlock)
                 {
+                    if (isRelease)
+                        _blockedMouseVk = 0;
+                    else
+                        _blockedMouseVk = eventVk;
+
+                    return new IntPtr(1);
+                }
+
+                // The matching button-up must not reach the application when the
+                // down-event was swallowed, even though dragging already ended.
+                if (isRelease && eventVk != 0 && eventVk == _blockedMouseVk)
+                {
+                    _blockedMouseVk = 0;
                     return new IntPtr(1);
                 }
             }
@@ -212,56 +233,68 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Returns true for messages that release a previously pressed key or button.
+        /// </summary>
+        private static bool IsReleaseMessage(uint message)
+        {
+            return message == WM_LBUTTONUP ||
+                   message == WM_RBUTTONUP ||
+                   message == WM_MBUTTONUP ||
+                   message == WM_XBUTTONUP ||
+                   message == WM_KEYUP ||
+                   message == WM_SYSKEYUP;
+        }
+
+        /// <summary>
+        /// Resolves the virtual-key code carried by a hook event.
+        /// Returns 0 when the event is not a key/button event.
+        /// </summary>
+        private static int ResolveVkCode(uint message, IntPtr lParam)
+        {
+            switch (message)
+            {
+                case WM_KEYDOWN:
+                case WM_KEYUP:
+                case WM_SYSKEYDOWN:
+                case WM_SYSKEYUP:
+                    var keyboardHookStruct = Marshal.PtrToStructure<WinApi.KBDLLHOOKSTRUCT>(lParam);
+                    return (int)keyboardHookStruct.vkCode;
+
+                case WM_LBUTTONDOWN:
+                case WM_LBUTTONUP:
+                    return WinApi.VK_LBUTTON;
+
+                case WM_RBUTTONDOWN:
+                case WM_RBUTTONUP:
+                    return WinApi.VK_RBUTTON;
+
+                case WM_MBUTTONDOWN:
+                case WM_MBUTTONUP:
+                    return WinApi.VK_MBUTTON;
+
+                case WM_XBUTTONDOWN:
+                case WM_XBUTTONUP:
+                    var mouseHookStruct = Marshal.PtrToStructure<WinApi.MSLLHOOKSTRUCT>(lParam);
+                    uint buttonData = (mouseHookStruct.mouseData >> 16) & 0xFFFF;
+                    return buttonData switch
+                    {
+                        1 => WinApi.VK_XBUTTON1,
+                        2 => WinApi.VK_XBUTTON2,
+                        _ => 0
+                    };
+
+                default:
+                    return 0;
+            }
+        }
+
+        /// <summary>
         /// Determines if the given event should be blocked based on current state.
         /// Returns true if the event is for a key/button that's part of the required combination.
         /// </summary>
         private bool IsEventBlockedByCurrentState(uint message, IntPtr lParam)
         {
-            // Check if this event corresponds to a key in our required keys
-            int vkCode = 0;
-            bool isKeyboardEvent =
-                message == WM_KEYDOWN ||
-                message == WM_KEYUP ||
-                message == WM_SYSKEYDOWN ||
-                message == WM_SYSKEYUP;
-
-            if (isKeyboardEvent)
-            {
-                // For keyboard events, get the vkCode from the KBDLLHOOKSTRUCT
-                var keyboardHookStruct = Marshal.PtrToStructure<WinApi.KBDLLHOOKSTRUCT>(lParam);
-                vkCode = (int)keyboardHookStruct.vkCode;
-            }
-            else
-            {
-                // Handle mouse button events
-                switch (message)
-                {
-                    case WM_LBUTTONDOWN:
-                    case WM_LBUTTONUP:
-                        vkCode = WinApi.VK_LBUTTON;
-                        break;
-                    case WM_RBUTTONDOWN:
-                    case WM_RBUTTONUP:
-                        vkCode = WinApi.VK_RBUTTON;
-                        break;
-                    case WM_MBUTTONDOWN:
-                    case WM_MBUTTONUP:
-                        vkCode = WinApi.VK_MBUTTON;
-                        break;
-                    case WM_XBUTTONDOWN:
-                    case WM_XBUTTONUP:
-                        // For X buttons, we need to get the actual button from mouseData
-                        var mouseHookStruct = Marshal.PtrToStructure<WinApi.MSLLHOOKSTRUCT>(lParam);
-                        uint buttonData = (mouseHookStruct.mouseData >> 16) & 0xFFFF;
-                        vkCode = buttonData switch
-                        {
-                            1 => WinApi.VK_XBUTTON1,
-                            2 => WinApi.VK_XBUTTON2,
-                            _ => 0
-                        };
-                        break;
-                }
-            }
+            int vkCode = ResolveVkCode(message, lParam);
 
             // If we couldn't determine a VK code, don't block
             if (vkCode == 0)
@@ -301,11 +334,25 @@ namespace nyxWM
                 }
 
                 // Determine if we should block this event
+                int eventVk = ResolveVkCode(message, lParam);
+                bool isRelease = IsReleaseMessage(message);
                 bool shouldBlock = _isEnabled && _isDragging && IsEventBlockedByCurrentState(message, lParam);
 
                 // If we should block, return non-zero to prevent the event from reaching the system
                 if (shouldBlock)
                 {
+                    if (isRelease)
+                        _blockedKeyVk = 0;
+                    else
+                        _blockedKeyVk = eventVk;
+
+                    return new IntPtr(1);
+                }
+
+                // Swallow the key-up that belongs to a swallowed key-down.
+                if (isRelease && eventVk != 0 && eventVk == _blockedKeyVk)
+                {
+                    _blockedKeyVk = 0;
                     return new IntPtr(1);
                 }
             }
@@ -456,6 +503,8 @@ namespace nyxWM
         {
             _pressedKeys.Clear();
             _isDragging = false;
+            _blockedMouseVk = 0;
+            _blockedKeyVk = 0;
             OnDragStop?.Invoke();
         }
 

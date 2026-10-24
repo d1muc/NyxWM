@@ -47,10 +47,23 @@ namespace nyxWM
         private int startMouseX;
         private int startMouseY;
 
+        // Raw input source (bypasses pointer acceleration) and its normalization.
+        private readonly RawMouseInput _rawInput;
+        private readonly float _sensitivity;
+        private readonly bool _smoothingEnabled;
+
+        // The physical cursor is re-anchored only after it travels this far, so the
+        // warp no longer runs on every frame.
+        private const int WarpThresholdPixels = 160;
+
+        // Motion state is touched by both the render thread and the UI thread
+        // (hotkeys, focus changes, drag start/stop). All access goes through this lock.
+        private readonly object _motionLock = new();
+
         // Lerp fields
         private float currentDx = 0, currentDy = 0;   // current window offset
         private float targetDx = 0, targetDy = 0;     // target offset from mouse movement
-        private bool isDragging = false;
+        private volatile bool isDragging = false;
 
         // Dirty flag: true only while windows need to move. Lets UpdatePosition return
         // immediately when the workspace is at rest.
@@ -90,9 +103,10 @@ namespace nyxWM
         /// <summary>
         /// Constructor: sets up the WinEvent hook for foreground window changes.
         /// </summary>
-        public WindowManager(MouseHook mouseHook)
+        public WindowManager(MouseHook mouseHook, RawMouseInput rawInput)
         {
             _mouseHook = mouseHook ?? throw new ArgumentNullException(nameof(mouseHook));
+            _rawInput = rawInput ?? throw new ArgumentNullException(nameof(rawInput));
             _isPaused = false;
 
             // Ensure a synchronization context exists for the current thread
@@ -109,6 +123,11 @@ namespace nyxWM
 
             // Get lerp rate from config
             _lerpRatePerSecond = ConfigManager.Current.LerpRatePerSecond;
+
+            // Cache the drag sensitivity: reading config on every frame is pointless
+            // because the configuration is loaded once at startup.
+            _sensitivity = ConfigManager.Current.CameraSensitivity;
+            _smoothingEnabled = ConfigManager.Current.SmoothingEnabled;
 
             // Set auto-center-on-focus default from config
             AutoCenterOnFocus = ConfigManager.Current.AutoCenterOnFocusDefault;
@@ -489,11 +508,16 @@ namespace nyxWM
             int deltaY = screenCenterY - winCenterY;
 
             // Reset current offsets and set target to move to center
-            currentDx = 0;
-            currentDy = 0;
-            targetDx = deltaX;
-            targetDy = deltaY;
-            _isAnimating = true;
+            lock (_motionLock)
+            {
+                currentDx = 0;
+                currentDy = 0;
+                targetDx = deltaX;
+                targetDy = deltaY;
+                _lastAppliedDx = int.MinValue;
+                _lastAppliedDy = int.MinValue;
+                _isAnimating = true;
+            }
         }
 
 
@@ -517,23 +541,32 @@ namespace nyxWM
         /// </summary>
         public void StartDragging()
         {
-            // Get current cursor position
-            WinApi.GetCursorPos(out WinApi.POINT pt);
-            startMouseX = pt.X;
-            startMouseY = pt.Y;
-            isDragging = true;
+            lock (_motionLock)
+            {
+                // Get current cursor position
+                WinApi.GetCursorPos(out WinApi.POINT pt);
+                startMouseX = pt.X;
+                startMouseY = pt.Y;
 
-            // Reset Lerp variables
-            currentDx = 0;
-            currentDy = 0;
-            targetDx = 0;
-            targetDy = 0;
+                // Reset Lerp variables and the applied-offset marker so the first
+                // frame of a new drag always reaches the window manager.
+                currentDx = 0;
+                currentDy = 0;
+                targetDx = 0;
+                targetDy = 0;
+                _lastAppliedDx = int.MinValue;
+                _lastAppliedDy = int.MinValue;
+                isDragging = true;
 
-            // Cache the current positions of the managed windows. The handle list itself is
-            // reused, so no EnumWindows sweep unless windows were created since the last scan.
-            RefreshRenderCache();
+                // Drop movement that arrived before the drag started.
+                _rawInput.Flush();
 
-            _isAnimating = true;
+                // Cache the current positions of the managed windows. The handle list itself is
+                // reused, so no EnumWindows sweep unless windows were created since the last scan.
+                RefreshRenderCache();
+
+                _isAnimating = true;
+            }
         }
 
         /// <summary>
@@ -541,7 +574,13 @@ namespace nyxWM
         /// </summary>
         public void StopDragging()
         {
-            isDragging = false;
+            // Any movement captured between the last frame and the release belongs
+            // to this gesture, so fold it into the target before the settle phase.
+            lock (_motionLock)
+            {
+                isDragging = false;
+                ConsumeRawMovement();
+            }
         }
 
         /// <summary>
@@ -578,9 +617,12 @@ namespace nyxWM
         /// </summary>
         public void ResetCamera()
         {
-            targetDx = 0;
-            targetDy = 0;
-            _isAnimating = true;
+            lock (_motionLock)
+            {
+                targetDx = 0;
+                targetDy = 0;
+                _isAnimating = true;
+            }
         }
 
         /// <summary>
@@ -635,9 +677,12 @@ namespace nyxWM
             int deltaY = screenCenterY - winCenterY;
 
             // Set target to current offset plus the delta needed to center
-            targetDx = currentDx + deltaX;
-            targetDy = currentDy + deltaY;
-            _isAnimating = true;
+            lock (_motionLock)
+            {
+                targetDx = currentDx + deltaX;
+                targetDy = currentDy + deltaY;
+                _isAnimating = true;
+            }
         }
 
         /// <summary>
@@ -654,74 +699,94 @@ namespace nyxWM
             if (!_isAnimating && !isDragging)
                 return;
 
-            // If dragging, update target based on mouse movement and warp cursor
-            if (isDragging)
-            {
-                WinApi.GetCursorPos(out WinApi.POINT pt);
-                int stepX = pt.X - startMouseX;
-                int stepY = pt.Y - startMouseY;
-
-                // Apply camera sensitivity
-                stepX = (int)(stepX * ConfigManager.Current.CameraSensitivity);
-                stepY = (int)(stepY * ConfigManager.Current.CameraSensitivity);
-
-                // Normal movement: windows follow mouse
-                targetDx += stepX;
-                targetDy += stepY;
-
-                // Warp cursor back to start position to allow infinite dragging
-                WinApi.SetCursorPos(startMouseX, startMouseY);
-
-                _isAnimating = true;
-            }
-
-            // Apply frame-rate independent Lerp smoothing: current chases target
-            // Convert LerpRatePerSecond to a per-millisecond rate, then calculate factor for this deltaTime
-            float lerpFactor = 1.0f - MathF.Exp(-_lerpRatePerSecond * deltaTime / 1000.0f);
-            currentDx += (targetDx - currentDx) * lerpFactor;
-            currentDy += (targetDy - currentDy) * lerpFactor;
-
-            // Snap to the target when close enough: stops sub-pixel micro-movements and lets
-            // the animation go idle.
-            bool settled = !isDragging &&
-                           MathF.Abs(targetDx - currentDx) < SettledThreshold &&
-                           MathF.Abs(targetDy - currentDy) < SettledThreshold;
-
-            if (settled)
-            {
-                currentDx = targetDx;
-                currentDy = targetDy;
-            }
-
-            // Convert to integer offset for window movement
-            int dx = (int)MathF.Round(currentDx);
-            int dy = (int)MathF.Round(currentDy);
-
-            // Nothing moved on screen since the previous tick - skip the WinAPI batch
-            if (dx == _lastAppliedDx && dy == _lastAppliedDy)
-            {
-                if (settled)
-                    _isAnimating = false;
-                return;
-            }
-
-            // Snapshot the published render cache (never mutated after publication)
+            int dx;
+            int dy;
+            bool settled;
             IntPtr[] handles;
             WinApi.RECT[] rects;
             int count;
-            lock (_positionsLock)
+
+            lock (_motionLock)
             {
-                handles = _renderHandles;
-                rects = _renderRects;
-                count = _renderCount;
+                bool dragging = isDragging;
+
+                // Frame-rate independent smoothing factor: how far "current" chases
+                // "target" this frame. Used for both drag smoothing and release inertia.
+                float lerpFactor = 1.0f - MathF.Exp(-_lerpRatePerSecond * deltaTime / 1000.0f);
+
+                // If dragging, update target from raw movement
+                if (dragging)
+                {
+                    if (_rawInput.IsReady)
+                        ConsumeRawMovement();
+                    else
+                        PollCursorFallback();
+
+                    if (_smoothingEnabled)
+                    {
+                        // Chase the target; the leftover distance becomes inertia
+                        // on release. Raw counts are linear, so this no longer
+                        // amplifies fast flicks like the old cursor-based path did.
+                        currentDx += (targetDx - currentDx) * lerpFactor;
+                        currentDy += (targetDy - currentDy) * lerpFactor;
+                    }
+                    else
+                    {
+                        // Raw 1:1 tracking.
+                        currentDx = targetDx;
+                        currentDy = targetDy;
+                    }
+
+                    _isAnimating = true;
+                }
+                else
+                {
+                    currentDx += (targetDx - currentDx) * lerpFactor;
+                    currentDy += (targetDy - currentDy) * lerpFactor;
+                }
+
+                // Snap to the target when close enough: stops sub-pixel micro-movements and lets
+                // the animation go idle.
+                settled = !dragging &&
+                          MathF.Abs(targetDx - currentDx) < SettledThreshold &&
+                          MathF.Abs(targetDy - currentDy) < SettledThreshold;
+
+                if (settled)
+                {
+                    currentDx = targetDx;
+                    currentDy = targetDy;
+                }
+
+                // Convert to integer offset for window movement
+                dx = (int)MathF.Round(currentDx);
+                dy = (int)MathF.Round(currentDy);
+
+                // Nothing moved on screen since the previous tick - skip the WinAPI batch
+                if (dx == _lastAppliedDx && dy == _lastAppliedDy)
+                {
+                    if (settled)
+                        _isAnimating = false;
+                    return;
+                }
+
+                // Snapshot the published render cache (never mutated after publication)
+                lock (_positionsLock)
+                {
+                    handles = _renderHandles;
+                    rects = _renderRects;
+                    count = _renderCount;
+                }
             }
 
             if (count == 0)
             {
-                _lastAppliedDx = dx;
-                _lastAppliedDy = dy;
-                if (settled)
-                    _isAnimating = false;
+                lock (_motionLock)
+                {
+                    _lastAppliedDx = dx;
+                    _lastAppliedDy = dy;
+                    if (settled)
+                        _isAnimating = false;
+                }
                 return;
             }
 
@@ -755,11 +820,74 @@ namespace nyxWM
             if (!positionedAll)
                 return;
 
-            _lastAppliedDx = dx;
-            _lastAppliedDy = dy;
+            lock (_motionLock)
+            {
+                _lastAppliedDx = dx;
+                _lastAppliedDy = dy;
 
-            if (settled)
-                _isAnimating = false;
+                if (settled)
+                    _isAnimating = false;
+            }
+        }
+
+        /// <summary>
+        /// Folds pending raw-input movement into the drag target. Raw counts are
+        /// accumulated in float and scaled once, so no movement is lost to integer
+        /// truncation and the OS pointer acceleration curve does not apply.
+        /// </summary>
+        private void ConsumeRawMovement()
+        {
+            if (!_rawInput.IsReady)
+                return;
+
+            if (!_rawInput.TryConsume(out int rawX, out int rawY))
+                return;
+
+            float scale = _sensitivity * _rawInput.CountsToPixels;
+            targetDx += rawX * scale;
+            targetDy += rawY * scale;
+
+            KeepCursorAnchored();
+        }
+
+        /// <summary>
+        /// Fallback used when raw input is unavailable: reads the cursor position
+        /// and warps it back to the anchor on every frame.
+        /// </summary>
+        private void PollCursorFallback()
+        {
+            if (!WinApi.GetCursorPos(out WinApi.POINT pt))
+                return;
+
+            int stepX = pt.X - startMouseX;
+            int stepY = pt.Y - startMouseY;
+
+            if (stepX == 0 && stepY == 0)
+                return;
+
+            targetDx += stepX * _sensitivity;
+            targetDy += stepY * _sensitivity;
+
+            WinApi.SetCursorPos(startMouseX, startMouseY);
+        }
+
+        /// <summary>
+        /// Re-anchors the physical cursor only after it drifts far from the drag
+        /// origin. Raw movement does not depend on the cursor position, so the
+        /// warp can no longer disturb the measurement.
+        /// </summary>
+        private void KeepCursorAnchored()
+        {
+            if (!WinApi.GetCursorPos(out WinApi.POINT pt))
+                return;
+
+            if (Math.Abs(pt.X - startMouseX) < WarpThresholdPixels &&
+                Math.Abs(pt.Y - startMouseY) < WarpThresholdPixels)
+            {
+                return;
+            }
+
+            WinApi.SetCursorPos(startMouseX, startMouseY);
         }
     }
 }

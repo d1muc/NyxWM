@@ -19,6 +19,11 @@ namespace nyxWM
   // Type: number > 0. Default: 8.0.
   "LerpRatePerSecond": 8.0,
 
+  // Smooth the camera while dragging, with inertia on release.
+  // false = canvas follows the pointer 1:1 with no smoothing.
+  // Type: true | false. Default: true.
+  "SmoothingEnabled": true,
+
   // Initial state of auto-center-on-focus at startup.
   // Type: true | false. Default: true.
   "AutoCenterOnFocusDefault": true,

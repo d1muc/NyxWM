@@ -149,6 +149,7 @@ namespace nyxWM
             {
                 FallbackRefreshRate = 60,
                 LerpRatePerSecond = 8.0f,
+                SmoothingEnabled = true,
                 AutoCenterOnFocusDefault = true,
                 PauseOnFullscreen = true,
                 MainMod = "CONTROL+ALT",
@@ -562,6 +563,12 @@ namespace nyxWM
         /// Sensitivity of camera movement (higher = faster movement). Must be > 0.
         /// </summary>
         public float CameraSensitivity { get; set; } = 1.0f;
+
+        /// <summary>
+        /// Smooths the camera while dragging and keeps inertia on release.
+        /// When false, the canvas tracks the pointer 1:1 with no smoothing.
+        /// </summary>
+        public bool SmoothingEnabled { get; set; } = true;
 
         /// <summary>
         /// List of window class names to ignore when tiling/moving windows.
