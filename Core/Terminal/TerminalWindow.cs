@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Forms;
 using WinFormsTimer = System.Windows.Forms.Timer;
 
@@ -75,6 +76,15 @@ namespace nyxWM
         private double _lastTickMs;
         private float _elapsedMs;
 
+        private TerminalSession? _session;
+        private AnsiScreenBuffer? _screen;
+        private int _consoleColumns;
+        private int _consoleRows;
+        private float _cellWidth = 8f;
+        private float _cellHeight = 16f;
+        private string? _sessionError;
+        private bool _sessionEnded;
+
         internal TerminalWindow(
             NotificationTheme theme,
             float scale,
@@ -96,6 +106,7 @@ namespace nyxWM
             TopMost = false;
             BackColor = _theme.BackgroundTop;
             DoubleBuffered = true;
+            KeyPreview = true;
             Text = "Terminal";
             SetStyle(
                 ControlStyles.AllPaintingInWmPaint |
@@ -149,6 +160,8 @@ namespace nyxWM
 
             Activate();
             SetForegroundWindow(Handle);
+
+            StartSession();
 
             if (!_animations)
             {
@@ -303,6 +316,8 @@ namespace nyxWM
             if (e.Button != MouseButtons.Left)
                 return;
 
+            Activate();
+
             if (_closeRect.Contains(e.Location))
             {
                 Close();
@@ -357,12 +372,63 @@ namespace nyxWM
             }
         }
 
+        protected override void OnKeyPress(KeyPressEventArgs e)
+        {
+            base.OnKeyPress(e);
+
+            if (char.IsControl(e.KeyChar))
+                return;
+
+            TerminalSession? session = _session;
+            if (session is null)
+                return;
+
+            session.WriteInput(e.KeyChar.ToString());
+            e.Handled = true;
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            base.OnKeyDown(e);
+
+            TerminalSession? session = _session;
+            if (session is null)
+                return;
+
+            if ((e.Control && e.Shift && e.KeyCode == Keys.V) ||
+                (e.Shift && e.KeyCode == Keys.Insert))
+            {
+                PasteClipboard();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                return;
+            }
+
+            byte[] sequence = TerminalInputEncoder.Encode(e.KeyCode, e.Shift, e.Control, e.Alt);
+            if (sequence.Length == 0)
+                return;
+
+            session.Write(sequence);
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
+
+        private void PasteClipboard()
+        {
+            TerminalSession? session = _session;
+            if (session is null || !Clipboard.ContainsText())
+                return;
+
+            session.WriteInput(Clipboard.GetText());
+        }
+
         protected override void OnSizeChanged(EventArgs e)
         {
             base.OnSizeChanged(e);
 
             ApplyLayout();
             ApplyRoundedRegion();
+            UpdateConsoleMetrics();
             Invalidate();
         }
 
@@ -446,33 +512,229 @@ namespace nyxWM
             }
 
             float pad = ConsolePaddingDip * _scale;
-            float lineHeight = _monoFont.GetHeight(graphics);
-            var promptRect = new RectangleF(
-                _consoleRect.Left + pad,
-                _consoleRect.Top + pad,
-                MathF.Max(1f, _consoleRect.Width - pad * 2f),
-                lineHeight);
+            float originX = _consoleRect.Left + pad;
+            float originY = _consoleRect.Top + pad;
 
-            using var accentBrush = new SolidBrush(_accentColor);
-            using var mutedBrush = new SolidBrush(_mutedColor);
+            GraphicsState state = graphics.Save();
+            graphics.SetClip(consolePath);
+
+            if (_sessionError is not null)
+            {
+                DrawConsoleMessage(graphics, _sessionError, originX, originY);
+                graphics.Restore(state);
+                return;
+            }
+
+            AnsiScreenBuffer? screen = _screen;
+            if (screen is null)
+            {
+                DrawConsoleMessage(graphics, "starting shell...", originX, originY);
+                graphics.Restore(state);
+                return;
+            }
+
+            DrawScreen(graphics, screen, originX, originY);
+
+            if (_sessionEnded)
+                DrawConsoleMessage(graphics, "[process exited]", originX, originY + _cellHeight);
+
+            graphics.Restore(state);
+        }
+
+        private void DrawScreen(Graphics graphics, AnsiScreenBuffer screen, float originX, float originY)
+        {
+            Color defaultForeground = _theme.TextPrimary;
+            float bottom = _consoleRect.Bottom - ConsolePaddingDip * _scale;
+
+            using var format = new StringFormat(StringFormat.GenericTypographic)
+            {
+                Alignment = StringAlignment.Near,
+                LineAlignment = StringAlignment.Near,
+                FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces
+            };
+
+            var builder = new StringBuilder(screen.Columns);
+
+            for (int row = 0; row < screen.Rows; row++)
+            {
+                float y = originY + row * _cellHeight;
+                if (y + _cellHeight > bottom + _cellHeight)
+                    break;
+
+                int column = 0;
+                while (column < screen.Columns)
+                {
+                    ScreenCell first = screen.GetCell(row, column);
+                    if (first.IsContinuation)
+                    {
+                        column++;
+                        continue;
+                    }
+
+                    int runStart = column;
+                    builder.Clear();
+
+                    while (column < screen.Columns)
+                    {
+                        ScreenCell current = screen.GetCell(row, column);
+                        if (current.IsContinuation)
+                        {
+                            column++;
+                            continue;
+                        }
+
+                        if (builder.Length > 0 && !SameCellStyle(first, current))
+                            break;
+
+                        builder.Append(current.Rune.ToString());
+                        column++;
+                    }
+
+                    string text = builder.ToString();
+                    bool reverse = (first.Attributes & AnsiAttributes.Reverse) != 0;
+
+                    Color foreground;
+                    Color background;
+
+                    if (reverse)
+                    {
+                        foreground = ResolveColor(first.Background, _consoleFill);
+                        background = ResolveColor(first.Foreground, defaultForeground);
+                    }
+                    else
+                    {
+                        foreground = ResolveColor(first.Foreground, defaultForeground);
+                        background = ResolveColor(first.Background, Color.Transparent);
+                    }
+
+                    var rect = new RectangleF(
+                        originX + runStart * _cellWidth,
+                        y,
+                        MathF.Max(1f, (column - runStart) * _cellWidth),
+                        _cellHeight);
+
+                    if (background.A > 0)
+                    {
+                        using var backgroundBrush = new SolidBrush(background);
+                        graphics.FillRectangle(backgroundBrush, rect);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        using var textBrush = new SolidBrush(foreground);
+                        graphics.DrawString(text, _monoFont, textBrush, rect.Location, format);
+
+                        if ((first.Attributes & AnsiAttributes.Underline) != 0)
+                        {
+                            using var underline = new Pen(foreground, MathF.Max(1f, _scale));
+                            graphics.DrawLine(
+                                underline,
+                                rect.Left,
+                                rect.Bottom - 1f,
+                                rect.Right,
+                                rect.Bottom - 1f);
+                        }
+                    }
+                }
+            }
+
+            DrawCursor(graphics, screen, originX, originY);
+        }
+
+        private void DrawCursor(Graphics graphics, AnsiScreenBuffer screen, float originX, float originY)
+        {
+            if (!screen.CursorVisible || !ContainsFocus)
+                return;
+
+            var rect = new RectangleF(
+                originX + screen.CursorColumn * _cellWidth,
+                originY + screen.CursorRow * _cellHeight,
+                MathF.Max(1f, _cellWidth),
+                MathF.Max(1f, _cellHeight));
+
+            using var brush = new SolidBrush(Color.FromArgb(96, _accentColor));
+            graphics.FillRectangle(brush, rect);
+        }
+
+        private void DrawConsoleMessage(Graphics graphics, string message, float x, float y)
+        {
+            using var brush = new SolidBrush(_mutedColor);
             using var format = new StringFormat
             {
                 Alignment = StringAlignment.Near,
-                LineAlignment = StringAlignment.Center,
-                Trimming = StringTrimming.EllipsisCharacter
+                LineAlignment = StringAlignment.Near,
+                Trimming = StringTrimming.EllipsisCharacter,
+                FormatFlags = StringFormatFlags.NoWrap
             };
 
-            graphics.DrawString(">", _monoFont, accentBrush, promptRect, format);
+            var rect = new RectangleF(
+                x,
+                y,
+                MathF.Max(1f, _consoleRect.Right - x - ConsolePaddingDip * _scale),
+                _monoFont.GetHeight(graphics));
 
-            float promptWidth = graphics.MeasureString(">", _monoFont).Width;
-            var hintRect = new RectangleF(
-                promptRect.Left + promptWidth + 10f * _scale,
-                promptRect.Top,
-                MathF.Max(1f, promptRect.Width - promptWidth - 10f * _scale),
-                lineHeight);
-
-            graphics.DrawString("type a command", _monoFont, mutedBrush, hintRect, format);
+            graphics.DrawString(message, _monoFont, brush, rect, format);
         }
+
+        private static bool SameCellStyle(ScreenCell left, ScreenCell right)
+        {
+            return left.Foreground.Equals(right.Foreground)
+                   && left.Background.Equals(right.Background)
+                   && left.Attributes == right.Attributes;
+        }
+
+        private static Color ResolveColor(AnsiColor color, Color fallback)
+        {
+            return color.Kind switch
+            {
+                AnsiColorKind.Rgb => Color.FromArgb(color.Red, color.Green, color.Blue),
+                AnsiColorKind.Indexed => IndexedColor(color.Index),
+                _ => fallback
+            };
+        }
+
+        private static Color IndexedColor(byte index)
+        {
+            if (index < 16)
+                return XtermPalette[index];
+
+            if (index < 232)
+            {
+                int cube = index - 16;
+                return Color.FromArgb(
+                    CubeLevel(cube / 36),
+                    CubeLevel(cube % 36 / 6),
+                    CubeLevel(cube % 6));
+            }
+
+            int gray = 8 + (index - 232) * 10;
+            return Color.FromArgb(gray, gray, gray);
+        }
+
+        private static int CubeLevel(int value)
+        {
+            return value == 0 ? 0 : 55 + value * 40;
+        }
+
+        private static readonly Color[] XtermPalette =
+        {
+            Color.FromArgb(0, 0, 0),
+            Color.FromArgb(128, 0, 0),
+            Color.FromArgb(0, 128, 0),
+            Color.FromArgb(128, 128, 0),
+            Color.FromArgb(0, 0, 128),
+            Color.FromArgb(128, 0, 128),
+            Color.FromArgb(0, 128, 128),
+            Color.FromArgb(192, 192, 192),
+            Color.FromArgb(128, 128, 128),
+            Color.FromArgb(255, 0, 0),
+            Color.FromArgb(0, 255, 0),
+            Color.FromArgb(255, 255, 0),
+            Color.FromArgb(0, 0, 255),
+            Color.FromArgb(255, 0, 255),
+            Color.FromArgb(0, 255, 255),
+            Color.FromArgb(255, 255, 255)
+        };
 
         private void DrawHeader(Graphics graphics)
         {
@@ -583,6 +845,128 @@ namespace nyxWM
             graphics.FillEllipse(dotBrush, dot);
         }
 
+        private void StartSession()
+        {
+            if (_session is not null || _sessionError is not null)
+                return;
+
+            UpdateConsoleMetrics();
+
+            try
+            {
+                var screen = new AnsiScreenBuffer(_consoleColumns, _consoleRows);
+                var session = new TerminalSession(new TerminalSessionOptions
+                {
+                    Columns = _consoleColumns,
+                    Rows = _consoleRows
+                });
+
+                screen.ResponseRequested += response => session.WriteInput(response);
+                session.OutputReceived += OnSessionOutput;
+                session.Exited += OnSessionExited;
+                session.Faulted += OnSessionFaulted;
+
+                _screen = screen;
+                _session = session;
+                session.Start();
+            }
+            catch (Exception error)
+            {
+                _session?.Dispose();
+                _session = null;
+                _screen = null;
+                _sessionError = error.Message;
+            }
+
+            Invalidate();
+        }
+
+        private void UpdateConsoleMetrics()
+        {
+            if (!IsHandleCreated || _consoleRect.Width <= 1f || _consoleRect.Height <= 1f)
+                return;
+
+            float pad = ConsolePaddingDip * _scale;
+            float width = MathF.Max(1f, _consoleRect.Width - pad * 2f);
+            float height = MathF.Max(1f, _consoleRect.Height - pad * 2f);
+
+            float cellWidth;
+            float cellHeight;
+
+            using (Graphics graphics = CreateGraphics())
+            {
+                Size measured = TextRenderer.MeasureText(
+                    graphics,
+                    "M",
+                    _monoFont,
+                    new Size(int.MaxValue, int.MaxValue),
+                    TextFormatFlags.NoPadding);
+
+                cellWidth = MathF.Max(1f, measured.Width);
+                cellHeight = MathF.Max(1f, _monoFont.GetHeight(graphics));
+            }
+
+            _cellWidth = cellWidth;
+            _cellHeight = cellHeight;
+
+            int columns = Math.Max(1, (int)MathF.Floor(width / cellWidth));
+            int rows = Math.Max(1, (int)MathF.Floor(height / cellHeight));
+
+            if (_consoleColumns == columns && _consoleRows == rows)
+                return;
+
+            _consoleColumns = columns;
+            _consoleRows = rows;
+
+            _screen?.Resize(columns, rows);
+            _session?.Resize(columns, rows);
+        }
+
+        private void OnSessionOutput(object? sender, TerminalOutputEventArgs e)
+        {
+            if (e.Text.Length == 0)
+                return;
+
+            PostToUi(() =>
+            {
+                _screen?.Feed(e.Text);
+                Invalidate();
+            });
+        }
+
+        private void OnSessionExited(object? sender, EventArgs e)
+        {
+            PostToUi(() =>
+            {
+                _sessionEnded = true;
+                Invalidate();
+            });
+        }
+
+        private void OnSessionFaulted(object? sender, TerminalErrorEventArgs e)
+        {
+            PostToUi(() =>
+            {
+                _sessionError = e.Error.Message;
+                Invalidate();
+            });
+        }
+
+        private void PostToUi(Action action)
+        {
+            if (IsDisposed || !IsHandleCreated)
+                return;
+
+            try
+            {
+                BeginInvoke(action);
+            }
+            catch (InvalidOperationException)
+            {
+                // Handle destroyed between the check and the post.
+            }
+        }
+
         private void ApplyLayout()
         {
             if (Width <= 0 || Height <= 0)
@@ -650,6 +1034,10 @@ namespace nyxWM
             {
                 _timer.Stop();
                 _timer.Dispose();
+
+                _session?.Dispose();
+                _session = null;
+
                 _titleFont.Dispose();
                 _monoFont.Dispose();
             }
