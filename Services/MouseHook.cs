@@ -43,6 +43,7 @@ namespace nyxWM
         private readonly string _mainmod;
         private bool _isDragging = false;
         private volatile bool _isEnabled = true;
+        private volatile bool _cameraSuspended;
 
         // Virtual keys whose button-down/key-down was swallowed by the hook.
         // Their matching release must be swallowed too, otherwise the target
@@ -186,8 +187,9 @@ namespace nyxWM
             {
                 // While disabled (game mode) the hook must not track keys or start
                 // drags: swallowing/processing input during a game is exactly what
-                // we are trying to avoid.
-                if (!_isEnabled)
+                // we are trying to avoid. Camera suspension (settings window) only
+                // freezes panning and still passes every event through untouched.
+                if (!_isEnabled || _cameraSuspended)
                     return WinApi.CallNextHookEx(hMouseHook, nCode, wParam, lParam);
 
                 uint message = (uint)wParam.ToInt32();
@@ -549,6 +551,32 @@ namespace nyxWM
             if (!enabled)
             {
                 ResetState();
+            }
+        }
+
+        /// <summary>
+        /// Freezes camera panning without uninstalling the hooks. Used while the
+        /// settings window is open so a stray drag cannot move the workspace.
+        /// An active drag is ended and pressed keys are cleared on suspend; all
+        /// events keep flowing to the target application.
+        /// </summary>
+        /// <param name="suspended">True to block camera drags, false to resume.</param>
+        public void SetCameraSuspended(bool suspended)
+        {
+            if (_cameraSuspended == suspended)
+                return;
+
+            _cameraSuspended = suspended;
+
+            if (!suspended)
+                return;
+
+            _pressedKeys.Clear();
+
+            if (_isDragging)
+            {
+                _isDragging = false;
+                OnDragStop?.Invoke();
             }
         }
 

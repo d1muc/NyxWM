@@ -3,25 +3,41 @@ using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
+using WinFormsTimer = System.Windows.Forms.Timer;
 
 namespace nyxWM
 {
     /// <summary>
-    /// Field that records a hotkey when it has focus. The recorded combination
-    /// replaces a modifier set equal to MainMod with the "mainmod" token.
+    /// Field that records a hotkey or mouse button once it is clicked. Clicking
+    /// arms the recorder; the first captured combination is committed and the
+    /// recorder goes silent again so stray input cannot trigger extra edits.
     /// </summary>
     internal sealed class SettingsHotkeyBox : Control
     {
+        private const int WmLeftButtonDown = 0x0201;
+        private const int WmRightButtonDown = 0x0204;
+        private const int WmMiddleButtonDown = 0x0207;
+        private const int WmXButtonDown = 0x020B;
+
         private static readonly string[] ModifierOrder = { "CONTROL", "ALT", "SHIFT", "WIN" };
 
         private readonly Color _accent;
         private readonly Func<string?>? _mainModProvider;
-        private string _value = string.Empty;
+        private readonly bool _allowMouse;
+        private readonly MouseFilter _filter;
+        private readonly WinFormsTimer _modifierTimer;
 
-        internal SettingsHotkeyBox(Color accent, Func<string?>? mainModProvider)
+        private string _value = string.Empty;
+        private bool _armed;
+        private Keys _accumulatedModifiers;
+        private Keys _downModifiers;
+
+        internal SettingsHotkeyBox(Color accent, Func<string?>? mainModProvider, bool allowMouse)
         {
             _accent = accent;
             _mainModProvider = mainModProvider;
+            _allowMouse = allowMouse;
+            _filter = new MouseFilter(this);
 
             SetStyle(
                 ControlStyles.UserPaint |
@@ -35,6 +51,9 @@ namespace nyxWM
             BackColor = Color.Transparent;
             Cursor = Cursors.IBeam;
             TabStop = true;
+
+            _modifierTimer = new WinFormsTimer { Interval = 450 };
+            _modifierTimer.Tick += (_, _) => CommitModifierOnly();
         }
 
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -65,18 +84,24 @@ namespace nyxWM
                 graphics.FillPath(fill, path);
 
                 using var border = new Pen(
-                    Focused ? _accent : SettingsPalette.FieldBorder,
-                    Focused ? MathF.Max(1.5f, Height * 0.06f) : 1f);
+                    Focused || _armed ? _accent : SettingsPalette.FieldBorder,
+                    Focused || _armed ? MathF.Max(1.5f, Height * 0.06f) : 1f);
                 graphics.DrawPath(border, path);
             }
 
-            string text = _value;
-            Color color = SettingsPalette.TextPrimary;
+            string text;
+            Color color;
 
-            if (string.IsNullOrEmpty(text) && Focused)
+            if (_armed)
             {
-                text = "Press keys...";
+                string pending = ComposeModifiers(_accumulatedModifiers);
+                text = string.IsNullOrEmpty(pending) ? "Press keys..." : pending + "+";
                 color = SettingsPalette.TextMuted;
+            }
+            else
+            {
+                text = _value;
+                color = SettingsPalette.TextPrimary;
             }
 
             float padding = MathF.Max(8f, Height * 0.32f);
@@ -103,7 +128,7 @@ namespace nyxWM
 
             if (e.Button == MouseButtons.Left)
             {
-                Focus();
+                Arm();
             }
         }
 
@@ -116,26 +141,42 @@ namespace nyxWM
         protected override void OnLostFocus(EventArgs e)
         {
             base.OnLostFocus(e);
+
+            if (_armed)
+                Cancel();
+
             Invalidate();
         }
 
         protected override bool IsInputKey(Keys keyData)
         {
-            return true;
+            return _armed;
         }
 
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);
 
-            Keys key = e.KeyCode;
-
-            if (key is Keys.ControlKey or Keys.ShiftKey or Keys.Menu or Keys.LWin or Keys.RWin)
+            if (!_armed)
                 return;
 
-            if (key is Keys.Escape or Keys.Back or Keys.Delete)
+            Keys key = e.KeyCode;
+
+            if (IsModifierKey(key))
             {
-                Value = string.Empty;
+                Keys flag = ToModifierFlag(key);
+                _accumulatedModifiers |= flag;
+                _downModifiers |= flag;
+                _modifierTimer.Stop();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                Invalidate();
+                return;
+            }
+
+            if (key == Keys.Escape)
+            {
+                Cancel();
                 e.Handled = true;
                 e.SuppressKeyPress = true;
                 return;
@@ -145,9 +186,143 @@ namespace nyxWM
             if (keyName == null)
                 return;
 
-            Value = FormatHotkey(e.Modifiers, keyName, _mainModProvider?.Invoke());
+            Commit(_accumulatedModifiers, keyName);
             e.Handled = true;
             e.SuppressKeyPress = true;
+        }
+
+        protected override void OnKeyUp(KeyEventArgs e)
+        {
+            base.OnKeyUp(e);
+
+            if (!_armed)
+                return;
+
+            Keys key = e.KeyCode;
+
+            if (!IsModifierKey(key))
+                return;
+
+            _downModifiers &= ~ToModifierFlag(key);
+
+            if (_downModifiers == Keys.None && _accumulatedModifiers != Keys.None)
+            {
+                _modifierTimer.Stop();
+                _modifierTimer.Start();
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                Disarm(excludeFilter: false);
+                _modifierTimer.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        private void Arm()
+        {
+            _armed = true;
+            _accumulatedModifiers = Keys.None;
+            _downModifiers = Keys.None;
+            _modifierTimer.Stop();
+
+            if (_allowMouse)
+            {
+                Application.AddMessageFilter(_filter);
+            }
+
+            Focus();
+            Invalidate();
+        }
+
+        private void Commit(Keys modifiers, string keyName)
+        {
+            if (!_armed)
+                return;
+
+            string combo = FormatHotkey(modifiers, keyName, _mainModProvider?.Invoke());
+            _value = combo;
+            Finish();
+        }
+
+        private void CommitModifierOnly()
+        {
+            if (!_armed)
+                return;
+
+            string combo = ComposeModifiers(_accumulatedModifiers);
+            _value = string.IsNullOrEmpty(combo) ? string.Empty : combo;
+            Finish();
+        }
+
+        private void CommitMouse(MouseButtons button)
+        {
+            if (!_armed)
+                return;
+
+            string? name = button switch
+            {
+                MouseButtons.Left => "LEFT",
+                MouseButtons.Right => "RIGHT",
+                MouseButtons.Middle => "MBUTTON",
+                MouseButtons.XButton1 => "XBUTTON1",
+                MouseButtons.XButton2 => "XBUTTON2",
+                _ => null
+            };
+
+            if (name == null)
+                return;
+
+            string mods = ComposeModifiers(Control.ModifierKeys);
+
+            if (!string.IsNullOrEmpty(mods) &&
+                !string.IsNullOrWhiteSpace(_mainModProvider?.Invoke()) &&
+                string.Equals(mods, ComposeModifiers(_mainModProvider!.Invoke()!), StringComparison.OrdinalIgnoreCase))
+            {
+                _value = "mainmod+" + name;
+            }
+            else if (string.IsNullOrEmpty(mods))
+            {
+                _value = name;
+            }
+            else
+            {
+                _value = mods + "+" + name;
+            }
+
+            Finish();
+        }
+
+        private void Cancel()
+        {
+            if (!_armed)
+                return;
+
+            Disarm(excludeFilter: false);
+            Invalidate();
+        }
+
+        private void Finish()
+        {
+            Disarm(excludeFilter: false);
+            Invalidate();
+        }
+
+        private void Disarm(bool excludeFilter)
+        {
+            _armed = false;
+            _accumulatedModifiers = Keys.None;
+            _downModifiers = Keys.None;
+            _modifierTimer.Stop();
+
+            if (!excludeFilter && _allowMouse)
+            {
+                Application.RemoveMessageFilter(_filter);
+            }
         }
 
         internal static string FormatHotkey(Keys modifiers, string keyName, string? mainMod)
@@ -172,7 +347,7 @@ namespace nyxWM
             bool control = (modifiers & Keys.Control) == Keys.Control;
             bool alt = (modifiers & Keys.Alt) == Keys.Alt;
             bool shift = (modifiers & Keys.Shift) == Keys.Shift;
-            bool win = (modifiers & Keys.LWin) == Keys.LWin;
+            bool win = (modifiers & (Keys.LWin | Keys.RWin)) != Keys.None;
 
             var parts = new System.Collections.Generic.List<string>(4);
 
@@ -213,6 +388,23 @@ namespace nyxWM
             }
 
             return string.Join("+", ordered);
+        }
+
+        private static bool IsModifierKey(Keys key)
+        {
+            return key is Keys.ControlKey or Keys.ShiftKey or Keys.Menu or Keys.LWin or Keys.RWin;
+        }
+
+        private static Keys ToModifierFlag(Keys key)
+        {
+            return key switch
+            {
+                Keys.ControlKey => Keys.Control,
+                Keys.ShiftKey => Keys.Shift,
+                Keys.Menu => Keys.Alt,
+                Keys.LWin or Keys.RWin => Keys.LWin,
+                _ => Keys.None
+            };
         }
 
         private static string? MapKey(Keys key)
@@ -271,6 +463,41 @@ namespace nyxWM
             path.AddArc(rect.Left, rect.Bottom - diameter, diameter, diameter, 90f, 90f);
             path.CloseFigure();
             return path;
+        }
+
+        private sealed class MouseFilter : IMessageFilter
+        {
+            private readonly SettingsHotkeyBox _owner;
+
+            internal MouseFilter(SettingsHotkeyBox owner)
+            {
+                _owner = owner;
+            }
+
+            public bool PreFilterMessage(ref Message m)
+            {
+                if (!_owner._armed)
+                    return false;
+
+                switch (m.Msg)
+                {
+                    case WmLeftButtonDown:
+                        _owner.CommitMouse(MouseButtons.Left);
+                        return true;
+                    case WmRightButtonDown:
+                        _owner.CommitMouse(MouseButtons.Right);
+                        return true;
+                    case WmMiddleButtonDown:
+                        _owner.CommitMouse(MouseButtons.Middle);
+                        return true;
+                    case WmXButtonDown:
+                        int button = (int)(m.WParam.ToInt64() >> 16) & 0xFFFF;
+                        _owner.CommitMouse(button == 2 ? MouseButtons.XButton2 : MouseButtons.XButton1);
+                        return true;
+                    default:
+                        return false;
+                }
+            }
         }
     }
 }

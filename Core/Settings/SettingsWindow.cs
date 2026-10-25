@@ -43,6 +43,7 @@ namespace nyxWM
         private const int ButtonNone = -1;
         private const int ButtonCancel = 0;
         private const int ButtonSave = 1;
+        private const int ButtonReset = 2;
 
         private static readonly string[] TabTitles =
         {
@@ -65,6 +66,7 @@ namespace nyxWM
 
         private readonly RectangleF _cancelRect;
         private readonly RectangleF _saveRect;
+        private readonly RectangleF _resetRect;
         private readonly RectangleF[] _tabRects;
         private readonly float[] _tabHover;
 
@@ -79,8 +81,10 @@ namespace nyxWM
         private bool _closing;
         private float _hoverCancel;
         private float _hoverSave;
+        private float _hoverReset;
         private bool _cancelHovered;
         private bool _saveHovered;
+        private bool _resetHovered;
         private int _pressedButton = ButtonNone;
         private int _pressedTab = -1;
         private int _activeTab;
@@ -135,6 +139,7 @@ namespace nyxWM
                 buttonTop,
                 buttonWidth,
                 buttonHeight);
+            _resetRect = new RectangleF(pad, buttonTop, buttonWidth, buttonHeight);
 
             _tabRects = BuildTabLayout();
             _tabHover = new float[_tabRects.Length];
@@ -228,6 +233,7 @@ namespace nyxWM
             DrawAccentGlow(graphics);
             DrawHeader(graphics);
             DrawTabs(graphics);
+            DrawFooterButton(graphics, _resetRect, "Reset", false, _hoverReset, _pressedButton == ButtonReset, danger: true);
             DrawFooterButton(graphics, _cancelRect, "Cancel", false, _hoverCancel, _pressedButton == ButtonCancel);
             DrawFooterButton(graphics, _saveRect, "Save", true, _hoverSave, _pressedButton == ButtonSave);
         }
@@ -242,6 +248,7 @@ namespace nyxWM
         {
             _cancelHovered = false;
             _saveHovered = false;
+            _resetHovered = false;
             _hoveredTab = -1;
             Cursor = Cursors.Default;
             base.OnMouseLeave(e);
@@ -285,6 +292,12 @@ namespace nyxWM
 
             if (!activateButton)
                 return;
+
+            if (buttonHit == ButtonReset)
+            {
+                OpenResetConfirm();
+                return;
+            }
 
             if (save)
                 _onSave?.Invoke();
@@ -334,6 +347,7 @@ namespace nyxWM
             float hoverFactor = 1f - MathF.Exp(-HoverSmoothingPerSecond * dtMs / 1000f);
             _hoverCancel += ((_cancelHovered ? 1f : 0f) - _hoverCancel) * hoverFactor;
             _hoverSave += ((_saveHovered ? 1f : 0f) - _hoverSave) * hoverFactor;
+            _hoverReset += ((_resetHovered ? 1f : 0f) - _hoverReset) * hoverFactor;
 
             for (int i = 0; i < _tabHover.Length; i++)
             {
@@ -365,9 +379,15 @@ namespace nyxWM
             _closeElapsedMs = 0f;
             _cancelHovered = false;
             _saveHovered = false;
+            _resetHovered = false;
             _pressedButton = ButtonNone;
             _pressedTab = -1;
             Cursor = Cursors.Default;
+        }
+
+        private void OpenResetConfirm()
+        {
+            ResetConfirmWindow.Open();
         }
 
         private void SetActiveTab(int index)
@@ -444,6 +464,7 @@ namespace nyxWM
 
             _cancelHovered = buttonHit == ButtonCancel;
             _saveHovered = buttonHit == ButtonSave;
+            _resetHovered = buttonHit == ButtonReset;
             _hoveredTab = tabHit;
             Cursor = buttonHit == ButtonNone && tabHit < 0 ? Cursors.Default : Cursors.Hand;
         }
@@ -454,6 +475,8 @@ namespace nyxWM
                 return ButtonCancel;
             if (_saveRect.Contains(location))
                 return ButtonSave;
+            if (_resetRect.Contains(location))
+                return ButtonReset;
 
             return ButtonNone;
         }
@@ -570,9 +593,14 @@ namespace nyxWM
             string label,
             bool accent,
             float hover,
-            bool pressed)
+            bool pressed,
+            bool danger = false)
         {
             float radius = ButtonRadiusDip * _scale;
+
+            Color ghostTint = danger
+                ? Color.FromArgb(242, 255, 128, 134)
+                : Color.FromArgb(242, 236, 239, 246);
 
             using GraphicsPath path = CreateRoundedPath(rect, radius);
 
@@ -594,19 +622,25 @@ namespace nyxWM
             else
             {
                 int alpha = (int)Math.Clamp(14f + 18f * hover, 0f, 255f);
-                using var brush = new SolidBrush(Color.FromArgb(alpha, 236, 239, 246));
+                using var brush = new SolidBrush(Color.FromArgb(
+                    Math.Min(alpha, ghostTint.A),
+                    ghostTint.R,
+                    ghostTint.G,
+                    ghostTint.B));
                 graphics.FillPath(brush, path);
 
                 int borderAlpha = (int)Math.Clamp(48f + 58f * hover, 0f, 255f);
                 using var border = new Pen(
-                    Color.FromArgb(borderAlpha, 236, 239, 246),
+                    Color.FromArgb(Math.Min(borderAlpha, ghostTint.A), ghostTint.R, ghostTint.G, ghostTint.B),
                     MathF.Max(1f, _scale));
                 graphics.DrawPath(border, path);
             }
 
             Color textColor = accent
                 ? Color.FromArgb(18, 20, 26)
-                : Color.FromArgb(235, 238, 245);
+                : danger
+                    ? Color.FromArgb(255, 168, 174)
+                    : Color.FromArgb(235, 238, 245);
 
             using var textBrush = new SolidBrush(textColor);
             using var format = new StringFormat

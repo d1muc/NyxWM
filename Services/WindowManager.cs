@@ -648,6 +648,17 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Freezes camera panning while the settings window is open. Unlike
+        /// <see cref="SetPause"/> this keeps the hooks installed, so hotkeys and
+        /// normal mouse input keep working; only drag-to-pan is blocked.
+        /// </summary>
+        /// <param name="suspended">True to block camera drags, false to resume.</param>
+        public void SetCameraSuspended(bool suspended)
+        {
+            _mouseHook.SetCameraSuspended(suspended);
+        }
+
+        /// <summary>
         /// Applies a game-mode transition and notifies listeners on change.
         /// </summary>
         private void ApplyPause(bool pause)

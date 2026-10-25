@@ -48,6 +48,10 @@ namespace nyxWM
             NotificationService.Initialize(() => windowManager.IsPaused);
             LauncherService.Initialize(() => windowManager.IsPaused);
 
+            // The settings window freezes camera panning while it is open, like a
+            // lightweight game mode: the hooks stay installed so the UI still works.
+            SettingsWindowService.Initialize(windowManager.SetCameraSuspended);
+
             // Get monitor refresh rate for timer setup
             int fallbackRefreshRate = ConfigManager.Current.FallbackRefreshRate;
             int refreshRate = MonitorUtils.GetPrimaryMonitorRefreshRate(fallbackRefreshRate);

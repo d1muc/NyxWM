@@ -134,7 +134,8 @@ namespace nyxWM
             AddLabel(panel, "Camera move button", Pad, y, labelWidth);
             SettingsHotkeyBox moveButton = CreateHotkeyBox(
                 _config.CameraMoveButton,
-                () => _config.MainMod);
+                () => _config.MainMod,
+                allowMouse: true);
 
             float moveWidth = Math.Min(fieldWidth, 240f * _scale);
             moveButton.Bounds = Rect(width - Pad - moveWidth, y, moveWidth, RowHeight);
@@ -515,9 +516,9 @@ namespace nyxWM
             return label;
         }
 
-        private SettingsHotkeyBox CreateHotkeyBox(string value, Func<string?>? mainModProvider)
+        private SettingsHotkeyBox CreateHotkeyBox(string value, Func<string?>? mainModProvider, bool allowMouse = false)
         {
-            return new SettingsHotkeyBox(_theme.Accent, mainModProvider)
+            return new SettingsHotkeyBox(_theme.Accent, mainModProvider, allowMouse)
             {
                 Value = value ?? string.Empty,
                 Font = _fieldFont

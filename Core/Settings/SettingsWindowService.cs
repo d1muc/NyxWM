@@ -9,8 +9,18 @@ namespace nyxWM
     internal static class SettingsWindowService
     {
         private static SettingsWindow? _window;
+        private static Action<bool>? _setCameraSuspended;
 
         internal static bool IsOpen => _window != null;
+
+        /// <summary>
+        /// Supplies the camera suspension switch (true while settings are open,
+        /// so dragging cannot pan the desktop behind the window).
+        /// </summary>
+        internal static void Initialize(Action<bool> setCameraSuspended)
+        {
+            _setCameraSuspended = setCameraSuspended ?? throw new ArgumentNullException(nameof(setCameraSuspended));
+        }
 
         /// <summary>
         /// Opens the settings window in the centre of the primary screen, or
@@ -37,12 +47,16 @@ namespace nyxWM
                 {
                     if (ReferenceEquals(_window, window))
                         _window = null;
+
+                    _setCameraSuspended?.Invoke(false);
                 };
 
+                _setCameraSuspended?.Invoke(true);
                 window.Show();
             }
             catch (Exception ex)
             {
+                _setCameraSuspended?.Invoke(false);
                 Console.WriteLine($"SettingsWindowService: failed to open settings: {ex.Message}");
             }
         }
@@ -54,6 +68,8 @@ namespace nyxWM
         {
             SettingsWindow? window = _window;
             _window = null;
+
+            _setCameraSuspended?.Invoke(false);
 
             if (window == null || window.IsDisposed)
                 return;
