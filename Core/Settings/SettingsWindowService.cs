@@ -40,7 +40,11 @@ namespace nyxWM
                 var window = new SettingsWindow(
                     theme,
                     GetDpiScale(),
-                    () => NotificationService.Show("Settings", "Config saved and reloaded"));
+                    settings =>
+                    {
+                        ConfigManager.Save(settings);
+                        NotificationService.Show("Settings", "Config saved and reloaded");
+                    });
 
                 _window = window;
                 window.FormClosed += (_, _) =>

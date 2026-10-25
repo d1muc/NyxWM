@@ -58,7 +58,7 @@ namespace nyxWM
 
         private readonly NotificationTheme _theme;
         private readonly float _scale;
-        private readonly Action? _onSave;
+        private readonly Action<ConfigSettings>? _onSave;
         private readonly Font _titleFont;
         private readonly Font _buttonFont;
         private readonly WinFormsTimer _timer;
@@ -98,7 +98,7 @@ namespace nyxWM
         private int _transitionDirection;
         private float _transitionElapsedMs;
 
-        internal SettingsWindow(NotificationTheme theme, float scale, Action? onSave)
+        internal SettingsWindow(NotificationTheme theme, float scale, Action<ConfigSettings>? onSave)
         {
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
             _scale = Math.Clamp(scale, 0.75f, 3f);
@@ -300,7 +300,7 @@ namespace nyxWM
             }
 
             if (save)
-                _onSave?.Invoke();
+                _onSave?.Invoke(_contentBuilder.CollectConfig());
 
             BeginClose();
         }

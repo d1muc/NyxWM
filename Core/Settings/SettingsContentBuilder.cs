@@ -33,6 +33,28 @@ namespace nyxWM
         private readonly Font _fieldFont;
         private readonly Font _boldFont;
 
+        private TextBox? _fallbackRefreshBox;
+        private SettingsSlider? _lerpSlider;
+        private SettingsToggle? _smoothingToggle;
+        private SettingsToggle? _autoCenterToggle;
+        private SettingsToggle? _pauseToggle;
+        private SettingsHotkeyBox? _mainModBox;
+
+        private SettingsHotkeyBox? _cameraMoveBox;
+        private SettingsSlider? _sensitivitySlider;
+
+        private ListBox? _ignoredList;
+
+        private readonly SettingsHotkeyBox?[] _hotkeyBoxes = new SettingsHotkeyBox?[6];
+
+        private readonly List<LaunchAppRow> _launchRows = new();
+
+        private SettingsComboBox? _themeCombo;
+
+        private SettingsToggle? _notifEnabledToggle;
+        private SettingsComboBox? _positionCombo;
+        private SettingsSlider? _durationSlider;
+
         internal SettingsContentBuilder(NotificationTheme theme, float scale, ConfigSettings config)
         {
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
@@ -86,6 +108,7 @@ namespace nyxWM
             float refreshWidth = Math.Min(fieldWidth, 180f * _scale);
             refresh.Bounds = Rect(width - Pad - refreshWidth, y, refreshWidth, RowHeight);
             panel.Controls.Add(refresh);
+            _fallbackRefreshBox = refresh;
             y += RowStep;
 
             AddLabel(panel, "Smoothing speed", Pad, y, labelWidth);
@@ -109,13 +132,14 @@ namespace nyxWM
             panel.Controls.Add(lerpSlider);
             panel.Controls.Add(lerpBox);
             LinkSlider(lerpSlider, lerpBox);
+            _lerpSlider = lerpSlider;
             y += RowStep;
 
-            AddToggleRow(panel, "Smoothing enabled", _config.SmoothingEnabled, width, y);
+            _smoothingToggle = AddToggleRow(panel, "Smoothing enabled", _config.SmoothingEnabled, width, y);
             y += RowStep;
-            AddToggleRow(panel, "Auto-center on focus", _config.AutoCenterOnFocusDefault, width, y);
+            _autoCenterToggle = AddToggleRow(panel, "Auto-center on focus", _config.AutoCenterOnFocusDefault, width, y);
             y += RowStep;
-            AddToggleRow(panel, "Pause on fullscreen", _config.PauseOnFullscreen, width, y);
+            _pauseToggle = AddToggleRow(panel, "Pause on fullscreen", _config.PauseOnFullscreen, width, y);
             y += RowStep;
 
             AddLabel(panel, "Main modifier", Pad, y, labelWidth);
@@ -123,6 +147,7 @@ namespace nyxWM
             float mainModWidth = Math.Min(fieldWidth, 240f * _scale);
             mainMod.Bounds = Rect(width - Pad - mainModWidth, y, mainModWidth, RowHeight);
             panel.Controls.Add(mainMod);
+            _mainModBox = mainMod;
         }
 
         private void BuildCamera(SettingsContentPanel panel, int width)
@@ -140,6 +165,7 @@ namespace nyxWM
             float moveWidth = Math.Min(fieldWidth, 240f * _scale);
             moveButton.Bounds = Rect(width - Pad - moveWidth, y, moveWidth, RowHeight);
             panel.Controls.Add(moveButton);
+            _cameraMoveBox = moveButton;
             y += RowStep;
 
             AddLabel(panel, "Camera sensitivity", Pad, y, labelWidth);
@@ -163,6 +189,7 @@ namespace nyxWM
             panel.Controls.Add(sensitivitySlider);
             panel.Controls.Add(sensitivityBox);
             LinkSlider(sensitivitySlider, sensitivityBox);
+            _sensitivitySlider = sensitivitySlider;
         }
 
         private void BuildWindows(SettingsContentPanel panel, int width)
@@ -190,6 +217,7 @@ namespace nyxWM
             }
 
             panel.Controls.Add(list);
+            _ignoredList = list;
             y += listHeight + 12f * _scale;
 
             float buttonHeight = RowHeight;
@@ -251,17 +279,17 @@ namespace nyxWM
             float fieldHeight = RowHeight;
             float boxWidth = Math.Min(fieldWidth, 260f * _scale);
 
-            AddHotkeyRow(panel, "Reset camera", _config.Hotkeys.ResetCamera, width, boxWidth, fieldHeight, y);
+            _hotkeyBoxes[0] = AddHotkeyRow(panel, "Reset camera", _config.Hotkeys.ResetCamera, width, boxWidth, fieldHeight, y);
             y += RowStep;
-            AddHotkeyRow(panel, "Toggle auto-center", _config.Hotkeys.ToggleAutoCenter, width, boxWidth, fieldHeight, y);
+            _hotkeyBoxes[1] = AddHotkeyRow(panel, "Toggle auto-center", _config.Hotkeys.ToggleAutoCenter, width, boxWidth, fieldHeight, y);
             y += RowStep;
-            AddHotkeyRow(panel, "Close window", _config.Hotkeys.CloseWindow, width, boxWidth, fieldHeight, y);
+            _hotkeyBoxes[2] = AddHotkeyRow(panel, "Close window", _config.Hotkeys.CloseWindow, width, boxWidth, fieldHeight, y);
             y += RowStep;
-            AddHotkeyRow(panel, "Center active window", _config.Hotkeys.CenterActiveWindow, width, boxWidth, fieldHeight, y);
+            _hotkeyBoxes[3] = AddHotkeyRow(panel, "Center active window", _config.Hotkeys.CenterActiveWindow, width, boxWidth, fieldHeight, y);
             y += RowStep;
-            AddHotkeyRow(panel, "Toggle game mode", _config.Hotkeys.ToggleGameMode, width, boxWidth, fieldHeight, y);
+            _hotkeyBoxes[4] = AddHotkeyRow(panel, "Toggle game mode", _config.Hotkeys.ToggleGameMode, width, boxWidth, fieldHeight, y);
             y += RowStep;
-            AddHotkeyRow(panel, "Toggle launcher", _config.Hotkeys.ToggleLauncher, width, boxWidth, fieldHeight, y);
+            _hotkeyBoxes[5] = AddHotkeyRow(panel, "Toggle launcher", _config.Hotkeys.ToggleLauncher, width, boxWidth, fieldHeight, y);
         }
 
         private void BuildLaunchApps(SettingsContentPanel panel, int width)
@@ -280,15 +308,15 @@ namespace nyxWM
             float removeWidth = 68f * _scale;
             float pathWidth = width - Pad * 2f - hotkeyWidth - browseWidth - removeWidth - gap * 3f;
 
-            var rows = new List<LaunchAppRow>();
-
             SettingsRoundedButton? addButton = null;
 
             void Relayout()
             {
-                for (int i = 0; i < rows.Count; i++)
+                int count = _launchRows.Count;
+
+                for (int i = 0; i < count; i++)
                 {
-                    LaunchAppRow row = rows[i];
+                    LaunchAppRow row = _launchRows[i];
                     float rowY = rowsTop + i * rowStep;
 
                     row.Hotkey.Bounds = Rect(Pad, rowY, hotkeyWidth, rowHeight);
@@ -307,7 +335,7 @@ namespace nyxWM
 
                 if (addButton != null)
                 {
-                    float addY = rowsTop + rows.Count * rowStep + 6f * _scale;
+                    float addY = rowsTop + _launchRows.Count * rowStep + 6f * _scale;
                     addButton.Bounds = Rect(Pad, addY, 116f * _scale, rowHeight);
                 }
             }
@@ -361,11 +389,11 @@ namespace nyxWM
                     row.Browse.Dispose();
                     row.Remove.Dispose();
 
-                    rows.Remove(row);
+                    _launchRows.Remove(row);
                     Relayout();
                 };
 
-                rows.Add(row);
+                _launchRows.Add(row);
                 panel.Controls.Add(row.Hotkey);
                 panel.Controls.Add(row.Path);
                 panel.Controls.Add(row.Browse);
@@ -408,6 +436,7 @@ namespace nyxWM
             combo.Items.AddRange(ThemeOptions);
             SelectComboValue(combo, _theme.Name);
             panel.Controls.Add(combo);
+            _themeCombo = combo;
         }
 
         private void BuildNotifications(SettingsContentPanel panel, int width)
@@ -416,7 +445,7 @@ namespace nyxWM
             float labelWidth = width * 0.42f;
             float fieldWidth = width - Pad * 2f - labelWidth - 12f * _scale;
 
-            AddToggleRow(panel, "Notifications enabled", _config.Notifications?.Enabled ?? true, width, y);
+            _notifEnabledToggle = AddToggleRow(panel, "Notifications enabled", _config.Notifications?.Enabled ?? true, width, y);
             y += RowStep;
 
             AddLabel(panel, "Notification position", Pad, y, labelWidth);
@@ -431,6 +460,7 @@ namespace nyxWM
             position.Items.AddRange(PositionOptions);
             SelectComboValue(position, _config.Notifications?.Position ?? "TopCenter");
             panel.Controls.Add(position);
+            _positionCombo = position;
             y += RowStep;
 
             AddLabel(panel, "Notification duration (ms)", Pad, y, labelWidth);
@@ -454,9 +484,10 @@ namespace nyxWM
             panel.Controls.Add(durationSlider);
             panel.Controls.Add(durationBox);
             LinkSlider(durationSlider, durationBox);
+            _durationSlider = durationSlider;
         }
 
-        private void AddHotkeyRow(
+        private SettingsHotkeyBox AddHotkeyRow(
             Control parent,
             string label,
             string value,
@@ -471,9 +502,10 @@ namespace nyxWM
             SettingsHotkeyBox box = CreateHotkeyBox(value, () => _config.MainMod);
             box.Bounds = Rect(width - Pad - boxWidth, y, boxWidth, boxHeight);
             parent.Controls.Add(box);
+            return box;
         }
 
-        private void AddToggleRow(Control parent, string label, bool value, int width, float y)
+        private SettingsToggle AddToggleRow(Control parent, string label, bool value, int width, float y)
         {
             float labelWidth = width * 0.42f;
             AddLabel(parent, label, Pad, y, labelWidth);
@@ -491,6 +523,7 @@ namespace nyxWM
                 (int)MathF.Round(y + (RowHeight - toggle.Height) / 2f));
 
             parent.Controls.Add(toggle);
+            return toggle;
         }
 
         private Label AddLabel(
@@ -637,6 +670,112 @@ namespace nyxWM
                 (int)MathF.Round(y),
                 Math.Max(1, (int)MathF.Round(width)),
                 Math.Max(1, (int)MathF.Round(height)));
+        }
+
+        /// <summary>
+        /// Builds a new configuration snapshot from the current values of every
+        /// control on the settings pages. Nothing is mutated here: the resulting
+        /// <see cref="ConfigSettings"/> is a fresh object ready to be saved.
+        /// </summary>
+        internal ConfigSettings CollectConfig()
+        {
+            string? rawMainMod = _mainModBox?.Value?.Trim();
+            string mainMod = string.IsNullOrWhiteSpace(rawMainMod)
+                ? "CONTROL+ALT"
+                : rawMainMod;
+
+            var hotkeys = new HotkeySettings
+            {
+                ResetCamera = ValueOf(_hotkeyBoxes[0], "mainmod + space"),
+                ToggleAutoCenter = ValueOf(_hotkeyBoxes[1], "mainmod + t"),
+                CloseWindow = ValueOf(_hotkeyBoxes[2], "mainmod + c"),
+                CenterActiveWindow = ValueOf(_hotkeyBoxes[3], "mainmod + f"),
+                ToggleGameMode = ValueOf(_hotkeyBoxes[4], "mainmod + g"),
+                ToggleLauncher = ValueOf(_hotkeyBoxes[5], "mainmod + d")
+            };
+
+            return new ConfigSettings
+            {
+                FallbackRefreshRate = ParseInt(_fallbackRefreshBox?.Text, 60),
+                LerpRatePerSecond = ParseFloat(_lerpSlider?.Value, 8.0f),
+                SmoothingEnabled = _smoothingToggle?.Checked ?? true,
+                AutoCenterOnFocusDefault = _autoCenterToggle?.Checked ?? true,
+                PauseOnFullscreen = _pauseToggle?.Checked ?? true,
+                MainMod = mainMod,
+                CameraMoveButton = ValueOf(_cameraMoveBox, "MBUTTON"),
+                CameraSensitivity = ParseFloat(_sensitivitySlider?.Value, 1.0f),
+                IgnoredWindowClassNames = CollectList(_ignoredList),
+                Hotkeys = hotkeys,
+                LaunchApps = CollectLaunchApps(),
+                Theme = _themeCombo?.SelectedItem?.ToString() ?? "Blue",
+                Notifications = new NotificationSettings
+                {
+                    Enabled = _notifEnabledToggle?.Checked ?? true,
+                    Position = _positionCombo?.SelectedItem?.ToString() ?? "TopCenter",
+                    DurationMs = ParseDuration(_durationSlider?.Value)
+                }
+            };
+        }
+
+        private static string ValueOf(SettingsHotkeyBox? box, string fallback)
+        {
+            string value = box?.Value?.Trim() ?? string.Empty;
+            return value.Length == 0 ? fallback : value;
+        }
+
+        private static int ParseInt(string? text, int fallback)
+        {
+            return int.TryParse(
+                text,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out int value)
+                ? value
+                : fallback;
+        }
+
+        private static float ParseFloat(double? value, float fallback)
+        {
+            if (value is not double number || double.IsNaN(number) || double.IsInfinity(number))
+                return fallback;
+
+            return (float)Math.Clamp(number, -1_000_000.0, 1_000_000.0);
+        }
+
+        private static int ParseDuration(double? value)
+        {
+            int duration = value is double number ? (int)Math.Round(number) : 3200;
+            return Math.Clamp(duration, 800, 20000);
+        }
+
+        private static string[] CollectList(ListBox? list)
+        {
+            if (list == null)
+                return Array.Empty<string>();
+
+            var result = new string[list.Items.Count];
+            for (int i = 0; i < result.Length; i++)
+                result[i] = list.Items[i]?.ToString() ?? string.Empty;
+
+            return result;
+        }
+
+        private Dictionary<string, string> CollectLaunchApps()
+        {
+            var apps = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (LaunchAppRow row in _launchRows)
+            {
+                string hotkey = row.Hotkey.Value?.Trim() ?? string.Empty;
+                string path = row.Path.Text?.Trim() ?? string.Empty;
+
+                if (string.IsNullOrWhiteSpace(hotkey) || string.IsNullOrWhiteSpace(path))
+                    continue;
+
+                apps[hotkey] = path;
+            }
+
+            return apps;
         }
 
         public void Dispose()

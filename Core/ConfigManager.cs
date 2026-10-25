@@ -74,6 +74,46 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Raised after <see cref="Save"/> has written the config and reloaded the
+        /// in-memory settings, so startup-cached subsystems can re-apply live values.
+        /// </summary>
+        public static event Action? Applied;
+
+        /// <summary>
+        /// Renders the full settings snapshot back into the commented JSONC document
+        /// and atomically replaces config.jsonc, then reloads it into memory.
+        /// </summary>
+        public static void Save(ConfigSettings settings)
+        {
+            ArgumentNullException.ThrowIfNull(settings);
+
+            string json = ConfigTemplate.Render(settings);
+            string configDir = Path.GetDirectoryName(ConfigFilePath)!;
+            if (!Directory.Exists(configDir))
+            {
+                Directory.CreateDirectory(configDir);
+            }
+
+            string tmpPath = ConfigFilePath + ".tmp";
+            File.WriteAllText(tmpPath, json);
+            File.Move(tmpPath, ConfigFilePath, overwrite: true);
+
+            Reload();
+            Applied?.Invoke();
+        }
+
+        /// <summary>
+        /// Reloads config.jsonc into the in-memory cache.
+        /// </summary>
+        public static void Reload()
+        {
+            lock (_lock)
+            {
+                _settings = LoadSettings();
+            }
+        }
+
+        /// <summary>
         /// Loads configuration from config.jsonc.
         /// If the file is missing, creates the config directory and writes the documented default file.
         /// Invalid or missing values are corrected in memory only; the file is left untouched.

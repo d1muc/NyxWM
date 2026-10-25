@@ -159,6 +159,17 @@ namespace nyxWM
                 CursorHider.Show();
             };
 
+            // A save from the settings window reloads config.jsonc; re-apply the
+            // parts that were cached at startup so the change takes effect now.
+            ConfigManager.Applied += () =>
+            {
+                RegisterConfiguredHotkeys();
+                mouseHook.ApplyBind(
+                    ConfigManager.Current.CameraMoveButton,
+                    ConfigManager.Current.MainMod);
+                windowManager.ApplyLiveConfig();
+            };
+
             // Register hotkeys from configuration
             RegisterConfiguredHotkeys();
 
@@ -198,8 +209,9 @@ namespace nyxWM
         /// </summary>
         private static void RegisterConfiguredHotkeys()
         {
-            // Clear any previously registered IDs
-            RegisteredHotkeyIds.Clear();
+            // Release everything registered before so a reload cannot leave stale
+            // combos behind, then start from a clean list.
+            UnregisterRegisteredHotkeys();
 
             var config = ConfigManager.Current;
             string mainmod = config.MainMod;
@@ -309,6 +321,21 @@ namespace nyxWM
 
             // Register launch app hotkeys
             RegisterLaunchAppHotkeys(mainmod);
+        }
+
+        /// <summary>
+        /// Unregisters every OS hotkey this process registered and clears the
+        /// bookkeeping used to route them. Called before a fresh registration so
+        /// a config reload never leaves stale combinations behind.
+        /// </summary>
+        private static void UnregisterRegisteredHotkeys()
+        {
+            foreach (int id in RegisteredHotkeyIds)
+            {
+                UnregisterHotKey(IntPtr.Zero, id);
+            }
+            RegisteredHotkeyIds.Clear();
+            LaunchAppPaths.Clear();
         }
 
         /// <summary>

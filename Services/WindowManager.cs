@@ -49,8 +49,9 @@ namespace nyxWM
 
         // Raw input source (bypasses pointer acceleration) and its normalization.
         private readonly RawMouseInput _rawInput;
-        private readonly float _sensitivity;
-        private readonly bool _smoothingEnabled;
+        // Mutable copies of motion tuning; refreshed on config reload.
+        private float _sensitivity;
+        private bool _smoothingEnabled;
 
         // The physical cursor is re-anchored only after it travels this far, so the
         // warp no longer runs on every frame.
@@ -78,7 +79,7 @@ namespace nyxWM
         private float _targetDeltaTime => 1000f / _monitorRefreshRate; // Target time per frame in ms
 
         // Lerp tuning - how quickly we catch up to target (per second)
-        private readonly float _lerpRatePerSecond;
+        private float _lerpRatePerSecond;
 
         // Auto-center on focus flag
         public bool AutoCenterOnFocus { get; set; }
@@ -656,6 +657,18 @@ namespace nyxWM
         public void SetCameraSuspended(bool suspended)
         {
             _mouseHook.SetCameraSuspended(suspended);
+        }
+
+        /// <summary>
+        /// Re-applies the motion tuning (sensitivity, lerp rate, smoothing) from
+        /// the live configuration after a save. Auto-center is deliberately left
+        /// alone because the user can toggle it at runtime.
+        /// </summary>
+        public void ApplyLiveConfig()
+        {
+            _sensitivity = ConfigManager.Current.CameraSensitivity;
+            _lerpRatePerSecond = ConfigManager.Current.LerpRatePerSecond;
+            _smoothingEnabled = ConfigManager.Current.SmoothingEnabled;
         }
 
         /// <summary>

@@ -40,8 +40,7 @@ namespace nyxWM
         // State tracking
         private readonly HashSet<int> _requiredKeys = new HashSet<int>();
         private readonly HashSet<int> _pressedKeys = new HashSet<int>();
-        private readonly string _mainmod;
-        private bool _isDragging = false;
+        private string _mainmod;        private bool _isDragging = false;
         private volatile bool _isEnabled = true;
         private volatile bool _cameraSuspended;
 
@@ -106,6 +105,17 @@ namespace nyxWM
                    vkCode == WinApi.VK_MBUTTON ||
                    vkCode == WinApi.VK_XBUTTON1 ||
                    vkCode == WinApi.VK_XBUTTON2;
+        }
+
+        /// <summary>
+        /// Re-applies the camera bind and main modifier after the configuration
+        /// has been reloaded, without tearing down the hooks.
+        /// </summary>
+        public void ApplyBind(string cameraMoveButton, string mainmod)
+        {
+            _mainmod = mainmod ?? string.Empty;
+            ParseCameraMoveButton(cameraMoveButton ?? string.Empty);
+            ResetState();
         }
 
         private int GetVirtualKeyCode(string key)
