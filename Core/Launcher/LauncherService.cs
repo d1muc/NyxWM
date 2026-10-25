@@ -62,7 +62,7 @@ namespace nyxWM
         /// </summary>
         internal static void Toggle()
         {
-            if (!_initialized)
+            if (!_initialized || SettingsWindowService.IsOpen)
                 return;
 
             if (!_open)
@@ -109,12 +109,17 @@ namespace nyxWM
             for (int i = 0; i < Icons.Length; i++)
             {
                 float centerX = left + buttonSize / 2f + i * (buttonSize + gap);
+                LauncherIcon icon = Icons[i];
+                Action onActivated = icon == LauncherIcon.Sliders
+                    ? OpenSettings
+                    : CloseAll;
+
                 var button = new LauncherButton(
-                    Icons[i],
+                    icon,
                     scale,
                     i * EntryStaggerMs,
                     theme,
-                    CloseAll);
+                    onActivated);
 
                 button.SetCenter(centerX, centerY);
                 button.Advance(0f);
@@ -139,6 +144,15 @@ namespace nyxWM
                 float delay = (Buttons.Count - 1 - i) * ExitStaggerMs;
                 Buttons[i].BeginClose(delay);
             }
+        }
+
+        /// <summary>
+        /// Closes the panel and opens the settings window.
+        /// </summary>
+        private static void OpenSettings()
+        {
+            CloseAll();
+            SettingsWindowService.Show();
         }
 
         private static void CloseImmediately()
