@@ -122,22 +122,18 @@ namespace nyxWM
     }
 
     /// <summary>
-    /// Payload of <see cref="TerminalSession.OutputReceived"/>: the raw bytes
-    /// ConPTY produced plus the same bytes decoded as UTF-8. Feed
-    /// <see cref="Text"/> straight into <see cref="AnsiScreenBuffer"/>.
+    /// Payload of <see cref="TerminalSession.OutputReceived"/>: the pseudoconsole
+    /// bytes decoded as UTF-8. Feed <see cref="Text"/> straight into
+    /// <see cref="AnsiScreenBuffer"/>.
     /// </summary>
     internal sealed class TerminalOutputEventArgs : EventArgs
     {
-        internal TerminalOutputEventArgs(byte[] data, string text)
+        internal TerminalOutputEventArgs(string text)
         {
-            Data = data;
             Text = text;
         }
 
-        /// <summary>Raw pseudoconsole bytes, including ANSI escape sequences.</summary>
-        public byte[] Data { get; }
-
-        /// <summary>Incrementally decoded UTF-8 text for the same bytes.</summary>
+        /// <summary>Incrementally decoded UTF-8 text for the read bytes.</summary>
         public string Text { get; }
     }
 
@@ -580,7 +576,6 @@ namespace nyxWM
 
             int written = _decoder.GetChars(data, _decodeBuffer, flush: false);
             string text = written == 0 ? string.Empty : new string(_decodeBuffer, 0, written);
-            byte[] copy = data.ToArray();
 
             EventHandler<TerminalOutputEventArgs>? handler = OutputReceived;
             if (handler is null)
@@ -588,7 +583,7 @@ namespace nyxWM
 
             try
             {
-                handler(this, new TerminalOutputEventArgs(copy, text));
+                handler(this, new TerminalOutputEventArgs(text));
             }
             catch (Exception error)
             {

@@ -31,7 +31,6 @@ namespace nyxWM
         private const int HTBOTTOM = 15;
         private const int HTBOTTOMLEFT = 16;
         private const int HTBOTTOMRIGHT = 17;
-        private const int VK_LBUTTON = 0x01;
 
         private const float BaseWidthDip = 1080f;
         private const float BaseHeightDip = 720f;
@@ -50,6 +49,13 @@ namespace nyxWM
         private const int LayoutRecoveryAttempts = 8;
         private const int LayoutRecoveryStepMs = 150;
 
+        // Output is coalesced instead of painted per read: a full-screen program
+        // such as cmatrix writes many small chunks per frame, and repainting each
+        // one would burn a core per window. Focused windows stay smooth, background
+        // windows drop to a low refresh rate.
+        private const int OutputPumpFocusedMs = 16;
+        private const int OutputPumpBackgroundMs = 100;
+
         private NotificationTheme _theme;
         private NotificationTheme _themeFrom;
         private float _themeProgress = 1f;
@@ -62,6 +68,12 @@ namespace nyxWM
         private readonly float _cornerRadiusDip;
         private readonly WinFormsTimer _timer;
         private readonly WinFormsTimer _blinkTimer;
+        private readonly WinFormsTimer _pumpTimer;
+        private readonly StringBuilder _pendingOutput = new();
+        private readonly object _pendingLock = new();
+        private bool _pumpRunning;
+        private readonly SolidBrush _textBrush = new(Color.Black);
+        private readonly SolidBrush _cellBrush = new(Color.Black);
         private readonly Stopwatch _clock = Stopwatch.StartNew();
 
         private TerminalColorScheme _scheme;
@@ -185,6 +197,9 @@ namespace nyxWM
             _blinkTimer.Tick += OnBlinkTick;
             UpdateBlinkTimer();
 
+            _pumpTimer = new WinFormsTimer { Interval = OutputPumpFocusedMs };
+            _pumpTimer.Tick += OnOutputPumpTick;
+
             NotificationService.LayoutSwitched += OnLayoutSwitched;
         }
 
@@ -200,9 +215,6 @@ namespace nyxWM
 
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        private static extern short GetAsyncKeyState(int virtualKey);
 
         [DllImport("user32.dll")]
         private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
@@ -235,17 +247,21 @@ namespace nyxWM
             base.OnActivated(e);
 
             _lastFocusMs = _clock.Elapsed.TotalMilliseconds;
+            _pumpTimer.Interval = OutputPumpFocusedMs;
+            _cursorBlinkOn = true;
 
-            // A click on this window (header drag, text selection or the close
-            // button) must not also recentre the workspace underneath it, or the
-            // camera would pan away mid-drag. Alt-tab and other keyboard focus
-            // changes hold no button, so they always recentre. OnActivated fires
-            // before WM_LBUTTONDOWN, so ask for the physical button state rather
-            // than Control.MouseButtons, which is still stale here.
-            if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0)
-                return;
-
+            // Centring on a mouse click is wanted as much as on alt-tab, so no
+            // button-state check: the camera follows the window the user clicked.
             _requestCenter?.Invoke(Handle);
+        }
+
+        protected override void OnDeactivate(EventArgs e)
+        {
+            base.OnDeactivate(e);
+
+            _pumpTimer.Interval = OutputPumpBackgroundMs;
+            _cursorBlinkOn = true;
+            InvalidateCursor();
         }
 
         /// <summary>
@@ -354,14 +370,14 @@ namespace nyxWM
                 if (!_cursorBlinkOn)
                 {
                     _cursorBlinkOn = true;
-                    Invalidate();
+                    InvalidateCursor();
                 }
 
                 return;
             }
 
             _cursorBlinkOn = !_cursorBlinkOn;
-            Invalidate();
+            InvalidateCursor();
         }
 
         private void UpdateBlinkTimer()
@@ -465,6 +481,13 @@ namespace nyxWM
             TerminalSession? session = _session;
             _session = null;
             _screen = null;
+
+            // Output queued by the old shell must not be fed into the new screen.
+            lock (_pendingLock)
+            {
+                _pendingOutput.Clear();
+            }
+
             session?.Dispose();
 
             _sessionError = null;
@@ -983,14 +1006,16 @@ namespace nyxWM
 
                     if (background.A > 0)
                     {
-                        using var backgroundBrush = new SolidBrush(background);
-                        graphics.FillRectangle(backgroundBrush, rect);
+                        // One brush is reused per paint; a full-screen animation
+                        // would otherwise allocate thousands of GDI+ objects.
+                        _cellBrush.Color = background;
+                        graphics.FillRectangle(_cellBrush, rect);
                     }
 
                     if (!string.IsNullOrWhiteSpace(text))
                     {
-                        using var textBrush = new SolidBrush(foreground);
-                        graphics.DrawString(text, _monoFont, textBrush, rect.Location, format);
+                        _textBrush.Color = foreground;
+                        graphics.DrawString(text, _monoFont, _textBrush, rect.Location, format);
 
                         if ((first.Attributes & AnsiAttributes.Underline) != 0)
                         {
@@ -1400,22 +1425,111 @@ namespace nyxWM
             if (e.Text.Length == 0 || !ReferenceEquals(sender, _session))
                 return;
 
-            PostToUi(() =>
+            bool startPump;
+
+            lock (_pendingLock)
             {
-                if (!ReferenceEquals(sender, _session))
+                _pendingOutput.Append(e.Text);
+                startPump = !_pumpRunning;
+                _pumpRunning = true;
+            }
+
+            if (startPump)
+                PostToUi(StartOutputPump);
+        }
+
+        private void StartOutputPump()
+        {
+            if (IsDisposed || !IsHandleCreated)
+                return;
+
+            if (!_pumpTimer.Enabled)
+                _pumpTimer.Start();
+        }
+
+        private void OnOutputPumpTick(object? sender, EventArgs e)
+        {
+            string text;
+
+            lock (_pendingLock)
+            {
+                if (_pendingOutput.Length == 0)
+                {
+                    // Cleared under the same lock the reader appends under, so a
+                    // chunk that arrives now sees _pumpRunning == false and
+                    // restarts the pump instead of being stranded.
+                    _pumpRunning = false;
+                    _pumpTimer.Stop();
                     return;
+                }
 
-                // Auto-scroll follows new output only while the view is already
-                // at the newest line; a user who scrolled up stays where they are.
-                bool follow = _autoScroll && (_screen is null || _screen.ScrollOffset == 0);
+                text = _pendingOutput.ToString();
+                _pendingOutput.Clear();
+            }
 
-                _screen?.Feed(e.Text);
+            FeedConsole(text);
+        }
 
-                if (follow)
-                    _screen?.ScrollToBottom();
+        private void FeedConsole(string text)
+        {
+            AnsiScreenBuffer? screen = _screen;
+            if (screen is null)
+                return;
 
+            // Auto-scroll follows new output only while the view is already at the
+            // newest line; a user who scrolled up stays where they are.
+            bool follow = _autoScroll && screen.ScrollOffset == 0;
+
+            screen.Feed(text);
+
+            if (follow)
+                screen.ScrollToBottom();
+
+            InvalidateConsole();
+        }
+
+        private void InvalidateConsole()
+        {
+            if (IsDisposed || WindowState == FormWindowState.Minimized)
+                return;
+
+            if (_consoleRect.Width <= 1f || _consoleRect.Height <= 1f)
+            {
                 Invalidate();
-            });
+                return;
+            }
+
+            Invalidate(Rectangle.Round(_consoleRect));
+        }
+
+        private void InvalidateCursor()
+        {
+            if (IsDisposed)
+                return;
+
+            AnsiScreenBuffer? screen = _screen;
+
+            if (WindowState == FormWindowState.Minimized
+                || screen is null
+                || _consoleRect.Width <= 1f
+                || _cellWidth <= 0f
+                || _cellHeight <= 0f)
+            {
+                Invalidate();
+                return;
+            }
+
+            float pad = ConsolePaddingDip * _scale;
+            float left = _consoleRect.Left + pad + screen.CursorColumn * _cellWidth;
+            float top = _consoleRect.Top + pad + screen.CursorRow * _cellHeight;
+
+            var rect = new Rectangle(
+                (int)MathF.Floor(left) - 1,
+                (int)MathF.Floor(top) - 1,
+                (int)MathF.Ceiling(_cellWidth) + 2,
+                (int)MathF.Ceiling(_cellHeight) + 2);
+
+            Invalidate(rect);
         }
 
         private void OnSessionExited(object? sender, EventArgs e)
@@ -1517,11 +1631,21 @@ namespace nyxWM
                 _blinkTimer.Stop();
                 _blinkTimer.Dispose();
 
+                _pumpTimer.Stop();
+                _pumpTimer.Dispose();
+
+                lock (_pendingLock)
+                {
+                    _pendingOutput.Clear();
+                }
+
                 _session?.Dispose();
                 _session = null;
 
                 _titleFont.Dispose();
                 _monoFont.Dispose();
+                _textBrush.Dispose();
+                _cellBrush.Dispose();
             }
 
             base.Dispose(disposing);
