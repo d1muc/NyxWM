@@ -115,6 +115,9 @@ namespace nyxWM
         }
 
         private readonly List<int> _parameters = new(16);
+        private readonly List<ScreenCell[]> _history = new();
+
+        private const int MaxHistoryLines = 2000;
 
         private ScreenCell[] _cells;
         private ScreenCell[] _alternateCells;
@@ -139,6 +142,7 @@ namespace nyxWM
         private bool _wrapPending;
         private bool _alternate;
         private bool _dirty;
+        private int _scrollOffset;
 
         private ParserState _state = ParserState.Ground;
         private int _version;
@@ -172,6 +176,15 @@ namespace nyxWM
         /// <summary>Monotonically increases each time the screen changes.</summary>
         public int Version => _version;
 
+        /// <summary>Lines scrolled up from the live screen; 0 means bottom.</summary>
+        internal int ScrollOffset => _scrollOffset;
+
+        /// <summary>Total scrollback lines currently retained.</summary>
+        internal int HistoryCount => _history.Count;
+
+        /// <summary>Largest valid <see cref="ScrollOffset"/>.</summary>
+        internal int MaxScrollOffset => _history.Count;
+
         /// <summary>Feeds decoded terminal output into the screen grid.</summary>
         internal void Feed(ReadOnlySpan<char> text)
         {
@@ -195,15 +208,71 @@ namespace nyxWM
             if (_dirty)
             {
                 _dirty = false;
-                _version++;
-                try
-                {
-                    Changed?.Invoke(this, EventArgs.Empty);
-                }
-                catch (Exception)
-                {
-                    // A render callback must not break the pipeline.
-                }
+                RaiseChanged();
+            }
+        }
+
+        /// <summary>Scrolls the view through the scrollback; positive scrolls up.</summary>
+        internal void Scroll(int lines)
+        {
+            if (_history.Count == 0)
+                return;
+
+            int next = Math.Clamp(_scrollOffset + lines, 0, _history.Count);
+            if (next == _scrollOffset)
+                return;
+
+            _scrollOffset = next;
+            RaiseChanged();
+        }
+
+        /// <summary>Returns the view to the live screen.</summary>
+        internal void ScrollToBottom()
+        {
+            if (_scrollOffset == 0)
+                return;
+
+            _scrollOffset = 0;
+            RaiseChanged();
+        }
+
+        /// <summary>
+        /// Cell as currently displayed: scrollback lines first, live screen at
+        /// the bottom. Rendering must use this instead of <see cref="GetCell"/>.
+        /// </summary>
+        internal ScreenCell GetViewCell(int row, int column)
+        {
+            if ((uint)row >= (uint)_rows || (uint)column >= (uint)_columns)
+                return default;
+
+            if (_scrollOffset == 0 || _alternate)
+                return GetCell(row, column);
+
+            int index = _history.Count - _scrollOffset + row;
+            if (index < 0)
+                return default;
+
+            if (index < _history.Count)
+                return _history[index][column];
+
+            int screenRow = index - _history.Count;
+            if ((uint)screenRow >= (uint)_rows)
+                return default;
+
+            return Active[screenRow * _columns + column];
+        }
+
+        private void RaiseChanged()
+        {
+            _version++;
+
+            try
+            {
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+            catch (Exception)
+            {
+                // A render callback must not break the pipeline.
             }
         }
 
@@ -235,14 +304,19 @@ namespace nyxWM
             _scrollBottom = height - 1;
             _wrapPending = false;
 
-            _version++;
-            try
+            ResizeHistory(width);
+
+            RaiseChanged();
+        }
+
+        private void ResizeHistory(int columns)
+        {
+            for (int index = 0; index < _history.Count; index++)
             {
-                Changed?.Invoke(this, EventArgs.Empty);
-            }
-            catch (Exception)
-            {
-                // A render callback must not break the pipeline.
+                ScreenCell[] previous = _history[index];
+                ScreenCell[] line = NewGrid(columns, 1);
+                Array.Copy(previous, line, Math.Min(previous.Length, columns));
+                _history[index] = line;
             }
         }
 
@@ -786,6 +860,9 @@ namespace nyxWM
 
             if (lines > 0)
             {
+                if (!_alternate && top == 0 && bottom == _rows - 1)
+                    PushHistory(grid, Math.Min(lines, _rows));
+
                 for (int row = top; row <= bottom - lines; row++)
                     CopyRow(grid, row + lines, row);
 
@@ -803,6 +880,23 @@ namespace nyxWM
             }
 
             _dirty = true;
+        }
+
+        private void PushHistory(ScreenCell[] grid, int lines)
+        {
+            for (int row = 0; row < lines; row++)
+            {
+                var line = new ScreenCell[_columns];
+                Array.Copy(grid, row * _columns, line, 0, _columns);
+                _history.Add(line);
+            }
+
+            int overflow = _history.Count - MaxHistoryLines;
+            if (overflow > 0)
+                _history.RemoveRange(0, overflow);
+
+            if (_scrollOffset > 0)
+                _scrollOffset = Math.Clamp(_scrollOffset + lines, 0, _history.Count);
         }
 
         private void SetScrollRegion(int top, int bottom)
@@ -927,6 +1021,7 @@ namespace nyxWM
                 return;
 
             _alternate = enabled;
+            _scrollOffset = 0;
 
             if (enabled)
             {
@@ -976,6 +1071,9 @@ namespace nyxWM
             _cursorVisible = true;
             _wrapEnabled = true;
             _wrapPending = false;
+
+            _history.Clear();
+            _scrollOffset = 0;
 
             Clear(Active);
             _dirty = true;

@@ -5,6 +5,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using WinFormsTimer = System.Windows.Forms.Timer;
 
@@ -30,6 +31,7 @@ namespace nyxWM
         private const int HTBOTTOM = 15;
         private const int HTBOTTOMLEFT = 16;
         private const int HTBOTTOMRIGHT = 17;
+        private const int VK_LBUTTON = 0x01;
 
         private const float BaseWidthDip = 980f;
         private const float BaseHeightDip = 620f;
@@ -44,6 +46,9 @@ namespace nyxWM
         private const float ResizeBorderDip = 8f;
         private const float CascadeStepDip = 28f;
         private const float EntryDurationMs = 240f;
+        private const float LayoutFocusWindowMs = 2000f;
+        private const int LayoutRecoveryAttempts = 8;
+        private const int LayoutRecoveryStepMs = 150;
 
         private NotificationTheme _theme;
         private NotificationTheme _themeFrom;
@@ -84,6 +89,12 @@ namespace nyxWM
         private float _cellHeight = 16f;
         private string? _sessionError;
         private bool _sessionEnded;
+
+        private bool _selecting;
+        private bool _hasSelection;
+        private Point _selectionStart;
+        private Point _selectionEnd;
+        private double _lastFocusMs;
 
         internal TerminalWindow(
             NotificationTheme theme,
@@ -139,6 +150,8 @@ namespace nyxWM
 
             _timer = new WinFormsTimer { Interval = 15 };
             _timer.Tick += OnTick;
+
+            NotificationService.LayoutSwitched += OnLayoutSwitched;
         }
 
         protected override CreateParams CreateParams
@@ -153,6 +166,15 @@ namespace nyxWM
 
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int virtualKey);
+
+        [DllImport("user32.dll")]
+        private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+
+        [DllImport("kernel32.dll")]
+        private static extern uint GetCurrentThreadId();
 
         protected override void OnShown(EventArgs e)
         {
@@ -178,16 +200,87 @@ namespace nyxWM
         {
             base.OnActivated(e);
 
-            // A click on the header starts a drag, so it must not also recentre
-            // the workspace underneath the pointer.
-            if (_dragging)
-                return;
+            _lastFocusMs = _clock.Elapsed.TotalMilliseconds;
 
-            Point cursor = PointToClient(System.Windows.Forms.Cursor.Position);
-            if (cursor.Y <= _headerBottom && !_closeRect.Contains(cursor))
+            // A click on this window (header drag, text selection or the close
+            // button) must not also recentre the workspace underneath it, or the
+            // camera would pan away mid-drag. Alt-tab and other keyboard focus
+            // changes hold no button, so they always recentre. OnActivated fires
+            // before WM_LBUTTONDOWN, so ask for the physical button state rather
+            // than Control.MouseButtons, which is still stale here.
+            if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0)
                 return;
 
             _requestCenter?.Invoke(Handle);
+        }
+
+        /// <summary>
+        /// A keyboard-layout switch makes Windows show its language flyout, which
+        /// briefly steals the foreground and swallows typed keys. Once the flyout
+        /// is gone, hand the foreground back to the terminal so typing resumes
+        /// without an extra click.
+        /// </summary>
+        private void OnLayoutSwitched()
+        {
+            if (IsDisposed || !IsHandleCreated)
+                return;
+
+            // Only when this terminal was the window being typed into recently,
+            // so a layout switch elsewhere never yanks focus to this window.
+            if (_clock.Elapsed.TotalMilliseconds - _lastFocusMs > LayoutFocusWindowMs)
+                return;
+
+            BeginInvoke(async () =>
+            {
+                // The flyout is created lazily and can take a while to disappear.
+                // Retry instead of guessing a single delay, and stop as soon as the
+                // terminal is foreground again.
+                for (int attempt = 0; attempt < LayoutRecoveryAttempts; attempt++)
+                {
+                    await Task.Delay(LayoutRecoveryStepMs);
+
+                    if (IsDisposed || !IsHandleCreated)
+                        return;
+
+                    if (WinApi.GetForegroundWindow() == Handle)
+                        return;
+
+                    if (TryTakeForeground())
+                        return;
+                }
+            });
+        }
+
+        /// <summary>
+        /// Brings this window to the foreground, attaching to the current foreground
+        /// thread first so Windows does not reject <c>SetForegroundWindow</c> while
+        /// another process (the language flyout) owns the foreground lock.
+        /// </summary>
+        private bool TryTakeForeground()
+        {
+            IntPtr foreground = WinApi.GetForegroundWindow();
+            uint foregroundThread = foreground == IntPtr.Zero
+                ? 0u
+                : WinApi.GetWindowThreadProcessId(foreground, out _);
+            uint ownThread = GetCurrentThreadId();
+
+            bool attached = foregroundThread != 0
+                            && foregroundThread != ownThread
+                            && AttachThreadInput(ownThread, foregroundThread, true);
+
+            try
+            {
+                SetForegroundWindow(Handle);
+                Activate();
+                Focus();
+            }
+            finally
+            {
+                if (attached)
+                    AttachThreadInput(ownThread, foregroundThread, false);
+            }
+
+            return WinApi.GetForegroundWindow() == Handle;
         }
 
         private void OnTick(object? sender, EventArgs e)
@@ -313,10 +406,15 @@ namespace nyxWM
         {
             base.OnMouseDown(e);
 
+            if (e.Button == MouseButtons.Right)
+            {
+                if (_hasSelection)
+                    CopySelection();
+                return;
+            }
+
             if (e.Button != MouseButtons.Left)
                 return;
-
-            Activate();
 
             if (_closeRect.Contains(e.Location))
             {
@@ -330,6 +428,17 @@ namespace nyxWM
                 _dragOffset = new Point(
                     System.Windows.Forms.Cursor.Position.X - Left,
                     System.Windows.Forms.Cursor.Position.Y - Top);
+                return;
+            }
+
+            if (TryGetConsoleCell(e.Location, out int row, out int column))
+            {
+                _selecting = true;
+                _hasSelection = false;
+                _selectionStart = new Point(column, row);
+                _selectionEnd = _selectionStart;
+                Capture = true;
+                Invalidate();
             }
         }
 
@@ -341,6 +450,18 @@ namespace nyxWM
             {
                 Point cursor = System.Windows.Forms.Cursor.Position;
                 Location = new Point(cursor.X - _dragOffset.X, cursor.Y - _dragOffset.Y);
+                return;
+            }
+
+            if (_selecting)
+            {
+                if (TryGetConsoleCell(e.Location, out int row, out int column))
+                {
+                    _selectionEnd = new Point(column, row);
+                    _hasSelection = _selectionStart != _selectionEnd;
+                    Invalidate();
+                }
+
                 return;
             }
 
@@ -357,8 +478,43 @@ namespace nyxWM
         {
             base.OnMouseUp(e);
 
-            if (e.Button == MouseButtons.Left)
-                _dragging = false;
+            if (e.Button != MouseButtons.Left)
+                return;
+
+            _dragging = false;
+
+            if (_selecting)
+            {
+                _selecting = false;
+                Capture = false;
+
+                if (TryGetConsoleCell(e.Location, out int row, out int column))
+                {
+                    _selectionEnd = new Point(column, row);
+                    _hasSelection = _selectionStart != _selectionEnd;
+                }
+
+                Invalidate();
+            }
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            base.OnMouseWheel(e);
+
+            AnsiScreenBuffer? screen = _screen;
+            if (screen is null)
+                return;
+
+            int lines = SystemInformation.MouseWheelScrollLines;
+            if (lines <= 0)
+                lines = 3;
+
+            _hasSelection = false;
+            _selecting = false;
+
+            screen.Scroll(e.Delta > 0 ? lines : -lines);
+            Invalidate();
         }
 
         protected override void OnMouseLeave(EventArgs e)
@@ -379,6 +535,9 @@ namespace nyxWM
             if (char.IsControl(e.KeyChar))
                 return;
 
+            _hasSelection = false;
+            _screen?.ScrollToBottom();
+
             TerminalSession? session = _session;
             if (session is null)
                 return;
@@ -391,9 +550,29 @@ namespace nyxWM
         {
             base.OnKeyDown(e);
 
-            TerminalSession? session = _session;
-            if (session is null)
+            // Track real typing, not just activation: a layout switch must only
+            // reclaim focus for the window the user was actually typing into.
+            _lastFocusMs = _clock.Elapsed.TotalMilliseconds;
+
+            // Clipboard shortcuts work even while the shell is not ready (or has
+            // already ended), so a copied selection is never swallowed by the
+            // session-null guard below.
+            if ((e.Control && e.Shift && e.KeyCode == Keys.C) ||
+                (e.Control && e.KeyCode == Keys.Insert))
+            {
+                CopySelection();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
                 return;
+            }
+
+            if (e.Control && e.KeyCode == Keys.C && _hasSelection)
+            {
+                CopySelection();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                return;
+            }
 
             if ((e.Control && e.Shift && e.KeyCode == Keys.V) ||
                 (e.Shift && e.KeyCode == Keys.Insert))
@@ -404,9 +583,19 @@ namespace nyxWM
                 return;
             }
 
+            TerminalSession? session = _session;
+            if (session is null)
+                return;
+
             byte[] sequence = TerminalInputEncoder.Encode(e.KeyCode, e.Shift, e.Control, e.Alt);
             if (sequence.Length == 0)
                 return;
+
+            // Cleared only after a key that really reaches the shell: modifier-only
+            // presses (Ctrl, Shift, Alt) must not destroy a selection before the
+            // clipboard shortcut that follows them can copy it.
+            _hasSelection = false;
+            _screen?.ScrollToBottom();
 
             session.Write(sequence);
             e.Handled = true;
@@ -534,6 +723,7 @@ namespace nyxWM
             }
 
             DrawScreen(graphics, screen, originX, originY);
+            DrawSelection(graphics, originX, originY);
 
             if (_sessionEnded)
                 DrawConsoleMessage(graphics, "[process exited]", originX, originY + _cellHeight);
@@ -564,7 +754,7 @@ namespace nyxWM
                 int column = 0;
                 while (column < screen.Columns)
                 {
-                    ScreenCell first = screen.GetCell(row, column);
+                    ScreenCell first = screen.GetViewCell(row, column);
                     if (first.IsContinuation)
                     {
                         column++;
@@ -576,7 +766,7 @@ namespace nyxWM
 
                     while (column < screen.Columns)
                     {
-                        ScreenCell current = screen.GetCell(row, column);
+                        ScreenCell current = screen.GetViewCell(row, column);
                         if (current.IsContinuation)
                         {
                             column++;
@@ -643,7 +833,7 @@ namespace nyxWM
 
         private void DrawCursor(Graphics graphics, AnsiScreenBuffer screen, float originX, float originY)
         {
-            if (!screen.CursorVisible || !ContainsFocus)
+            if (!screen.CursorVisible || !ContainsFocus || screen.ScrollOffset > 0)
                 return;
 
             var rect = new RectangleF(
@@ -654,6 +844,110 @@ namespace nyxWM
 
             using var brush = new SolidBrush(Color.FromArgb(96, _accentColor));
             graphics.FillRectangle(brush, rect);
+        }
+
+        private void DrawSelection(Graphics graphics, float originX, float originY)
+        {
+            if (!_hasSelection)
+                return;
+
+            (Point start, Point end) = NormalizeSelection();
+            using var brush = new SolidBrush(Color.FromArgb(72, _accentColor));
+
+            for (int row = start.Y; row <= end.Y; row++)
+            {
+                int from = row == start.Y ? start.X : 0;
+                int to = row == end.Y ? end.X : Math.Max(0, _consoleColumns - 1);
+
+                var rect = new RectangleF(
+                    originX + from * _cellWidth,
+                    originY + row * _cellHeight,
+                    MathF.Max(1f, (to - from + 1) * _cellWidth),
+                    _cellHeight);
+
+                graphics.FillRectangle(brush, rect);
+            }
+        }
+
+        private (Point Start, Point End) NormalizeSelection()
+        {
+            Point a = _selectionStart;
+            Point b = _selectionEnd;
+
+            bool swap = a.Y > b.Y || (a.Y == b.Y && a.X > b.X);
+            return swap ? (b, a) : (a, b);
+        }
+
+        private bool TryGetConsoleCell(Point point, out int row, out int column)
+        {
+            row = 0;
+            column = 0;
+
+            if (_screen is null || _consoleColumns <= 0 || _consoleRows <= 0)
+                return false;
+
+            float pad = ConsolePaddingDip * _scale;
+            float left = _consoleRect.Left + pad;
+            float top = _consoleRect.Top + pad;
+            float right = _consoleRect.Right - pad;
+            float bottom = _consoleRect.Bottom - pad;
+
+            if (point.X < left || point.X > right || point.Y < top || point.Y > bottom)
+                return false;
+
+            column = Math.Clamp((int)MathF.Floor((point.X - left) / _cellWidth), 0, _consoleColumns - 1);
+            row = Math.Clamp((int)MathF.Floor((point.Y - top) / _cellHeight), 0, _consoleRows - 1);
+            return true;
+        }
+
+        private string GetSelectedText()
+        {
+            AnsiScreenBuffer? screen = _screen;
+            if (!_hasSelection || screen is null)
+                return string.Empty;
+
+            (Point start, Point end) = NormalizeSelection();
+            var builder = new StringBuilder();
+
+            for (int row = start.Y; row <= end.Y; row++)
+            {
+                int from = row == start.Y ? start.X : 0;
+                int to = row == end.Y ? end.X : Math.Max(0, _consoleColumns - 1);
+
+                var line = new StringBuilder();
+
+                for (int column = from; column <= to; column++)
+                {
+                    ScreenCell cell = screen.GetViewCell(row, column);
+                    if (cell.IsContinuation)
+                        continue;
+
+                    line.Append(cell.Rune.ToString());
+                }
+
+                builder.Append(line.ToString().TrimEnd());
+
+                if (row < end.Y)
+                    builder.Append("\r\n");
+            }
+
+            return builder.ToString();
+        }
+
+        private void CopySelection()
+        {
+            string text = GetSelectedText();
+            if (text.Length == 0)
+                return;
+
+            try
+            {
+                Clipboard.SetText(text);
+            }
+            catch (ExternalException)
+            {
+                // Clipboard is held by another process; nothing sensible to do.
+            }
         }
 
         private void DrawConsoleMessage(Graphics graphics, string message, float x, float y)
@@ -895,14 +1189,15 @@ namespace nyxWM
 
             using (Graphics graphics = CreateGraphics())
             {
-                Size measured = TextRenderer.MeasureText(
-                    graphics,
+                // GDI+ metrics, not GDI TextRenderer: DrawScreen draws with
+                // GenericTypographic, and a GDI/GDI+ mismatch skews the cell grid.
+                SizeF cell = graphics.MeasureString(
                     "M",
                     _monoFont,
-                    new Size(int.MaxValue, int.MaxValue),
-                    TextFormatFlags.NoPadding);
+                    int.MaxValue,
+                    StringFormat.GenericTypographic);
 
-                cellWidth = MathF.Max(1f, measured.Width);
+                cellWidth = MathF.Max(1f, MathF.Ceiling(cell.Width));
                 cellHeight = MathF.Max(1f, _monoFont.GetHeight(graphics));
             }
 
@@ -917,6 +1212,9 @@ namespace nyxWM
 
             _consoleColumns = columns;
             _consoleRows = rows;
+
+            _hasSelection = false;
+            _selecting = false;
 
             _screen?.Resize(columns, rows);
             _session?.Resize(columns, rows);
@@ -1032,6 +1330,8 @@ namespace nyxWM
         {
             if (disposing)
             {
+                NotificationService.LayoutSwitched -= OnLayoutSwitched;
+
                 _timer.Stop();
                 _timer.Dispose();
 

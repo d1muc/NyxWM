@@ -35,6 +35,9 @@ namespace nyxWM
         private static float _dpiScale = 1f;
         private static bool _initialized;
 
+        /// <summary>Raised on the UI thread when a keyboard-layout change is detected.</summary>
+        internal static event Action? LayoutSwitched;
+
         /// <summary>
         /// Starts the notification system. <paramref name="isGameModeActive"/> is polled on
         /// every tick; while it returns true, notifications are hidden and suppressed.
@@ -194,6 +197,7 @@ namespace nyxWM
                 if (language != null)
                 {
                     Show("Language changed", language);
+                    LayoutSwitched?.Invoke();
                 }
             }
 
