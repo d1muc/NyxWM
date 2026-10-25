@@ -210,7 +210,8 @@ namespace nyxWM
                     CenterActiveWindow = "mainmod + f",
                     ToggleGameMode = "mainmod + g",
                     ToggleLauncher = "mainmod + d",
-                    ToggleRofiMenu = "mainmod + q"
+                    ToggleRofiMenu = "mainmod + q",
+                    OpenTerminal = "mainmod + enter"
                 },
                 Notifications = new NotificationSettings
                 {
@@ -322,7 +323,8 @@ namespace nyxWM
                     CloseWindow = "mainmod + c",
                     CenterActiveWindow = "mainmod + f",
                     ToggleLauncher = "mainmod + d",
-                    ToggleRofiMenu = "mainmod + q"
+                    ToggleRofiMenu = "mainmod + q",
+                    OpenTerminal = "mainmod + enter"
                 };
                 changed = true;
             }
@@ -376,6 +378,13 @@ namespace nyxWM
                 {
                     Console.WriteLine($"Invalid toggleRofiMenu hotkey: {settings.Hotkeys.ToggleRofiMenu}. Using default.");
                     settings.Hotkeys.ToggleRofiMenu = "mainmod + q";
+                    changed = true;
+                }
+
+                if (!IsValidHotkeyString(settings.Hotkeys.OpenTerminal, settings.MainMod))
+                {
+                    Console.WriteLine($"Invalid openTerminal hotkey: {settings.Hotkeys.OpenTerminal}. Using default.");
+                    settings.Hotkeys.OpenTerminal = "mainmod + enter";
                     changed = true;
                 }
 
@@ -762,5 +771,10 @@ namespace nyxWM
         /// Hotkey for showing or hiding the Rofi application menu.
         /// </summary>
         public string ToggleRofiMenu { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Hotkey for opening a new terminal window on the canvas.
+        /// </summary>
+        public string OpenTerminal { get; set; } = string.Empty;
     }
 }

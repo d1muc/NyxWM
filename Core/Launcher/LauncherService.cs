@@ -116,6 +116,7 @@ namespace nyxWM
                 {
                     LauncherIcon.Sliders => OpenSettings,
                     LauncherIcon.Search => OpenRofiMenu,
+                    LauncherIcon.Terminal => OpenTerminalWindow,
                     _ => CloseAll
                 };
 
@@ -167,6 +168,15 @@ namespace nyxWM
         {
             CloseImmediately();
             RofiMenuService.Show();
+        }
+
+        /// <summary>
+        /// Closes the panel and opens a new terminal window on the canvas.
+        /// </summary>
+        private static void OpenTerminalWindow()
+        {
+            CloseImmediately();
+            TerminalWindowService.OpenNew();
         }
 
         /// <summary>

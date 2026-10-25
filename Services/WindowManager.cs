@@ -297,6 +297,16 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Marks the cached window list stale so the next camera gesture picks up
+        /// windows this process created. Own-process WinEvents are skipped, so a
+        /// fresh window would otherwise stay outside the managed workspace.
+        /// </summary>
+        public void InvalidateWindowCache()
+        {
+            _cacheDirty = true;
+        }
+
+        /// <summary>
         /// Rebuilds the cached window handle list if it was invalidated by window creation.
         /// </summary>
         private void EnsureWindowCache()
@@ -491,12 +501,21 @@ namespace nyxWM
             if (_isPaused)
                 return;
 
-            // If auto-center is disabled or we are currently dragging, do nothing.
-            if (!AutoCenterOnFocus || isDragging)
+            CenterOnFocus(hwnd);
+        }
+
+        /// <summary>
+        /// Centers a window on the screen with the same reset-style camera math
+        /// as automatic focus centering. Used both by the foreground hook and by
+        /// windows this process owns, whose focus events the hook never sees.
+        /// </summary>
+        public void CenterOnFocus(IntPtr hwnd)
+        {
+            if (hwnd == IntPtr.Zero || !AutoCenterOnFocus || isDragging)
                 return;
 
-            // Refresh the positions of the managed windows from the cached handle list
-            // (a full EnumWindows sweep only happens when the cache was invalidated).
+            // Refresh the positions of the managed windows from the cached handle
+            // list (a full EnumWindows sweep only happens when the cache is stale).
             RefreshRenderCache();
 
             // Get the rectangle of the focused window

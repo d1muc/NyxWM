@@ -88,7 +88,9 @@ namespace nyxWM
     // Show or hide the quick-action panel (settings, search, terminal).
     "ToggleLauncher": "mainmod + d",
     // Show or hide the Rofi application menu.
-    "ToggleRofiMenu": "mainmod + q"
+    "ToggleRofiMenu": "mainmod + q",
+    // Open a new terminal window on the canvas.
+    "OpenTerminal": "mainmod + enter"
   },
 
   // Extra hotkeys that launch programs, documents or URLs.
@@ -229,7 +231,9 @@ namespace nyxWM
             sb.AppendLine("    // Show or hide the quick-action panel (settings, search, terminal).");
             sb.AppendLine($"    \"ToggleLauncher\": {Str(hotkeys.ToggleLauncher)},");
             sb.AppendLine("    // Show or hide the Rofi application menu.");
-            sb.AppendLine($"    \"ToggleRofiMenu\": {Str(hotkeys.ToggleRofiMenu)}");
+            sb.AppendLine($"    \"ToggleRofiMenu\": {Str(hotkeys.ToggleRofiMenu)},");
+            sb.AppendLine("    // Open a new terminal window on the canvas.");
+            sb.AppendLine($"    \"OpenTerminal\": {Str(hotkeys.OpenTerminal)}");
             sb.AppendLine("  },");
             sb.AppendLine();
             sb.AppendLine("  // Extra hotkeys that launch programs, documents or URLs.");

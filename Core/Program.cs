@@ -17,6 +17,7 @@ namespace nyxWM
         internal const int HOTKEY_ID_GAME_MODE = 0x0005;
         internal const int HOTKEY_ID_LAUNCHER = 0x0006;
         internal const int HOTKEY_ID_ROFI_MENU = 0x0007;
+        internal const int HOTKEY_ID_OPEN_TERMINAL = 0x0008;
         internal const int HOTKEY_ID_LAUNCH_APP_BASE = 0x1000;
         internal const int WM_HOTKEY = 0x0312;
 
@@ -55,6 +56,13 @@ namespace nyxWM
 
             // The Rofi menu freezes camera panning for the same reason.
             RofiMenuService.Initialize(windowManager.SetCameraSuspended);
+
+            // Terminal windows are ordinary canvas windows, so they only need the
+            // camera cache to notice them and the same focus centring every other
+            // window receives from the workspace hook.
+            TerminalWindowService.Initialize(
+                windowManager.InvalidateWindowCache,
+                windowManager.CenterOnFocus);
 
             // Get monitor refresh rate for timer setup
             int fallbackRefreshRate = ConfigManager.Current.FallbackRefreshRate;
@@ -118,6 +126,7 @@ namespace nyxWM
                 NotificationService.Shutdown();
                 LauncherService.Shutdown();
                 RofiMenuService.Shutdown();
+                TerminalWindowService.CloseAll();
                 renderTimer?.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -176,6 +185,7 @@ namespace nyxWM
                     ConfigManager.Current.CameraMoveButton,
                     ConfigManager.Current.MainMod);
                 windowManager.ApplyLiveConfig();
+                TerminalWindowService.ApplyThemeToAll();
             };
 
             // Register hotkeys from configuration
@@ -202,6 +212,7 @@ namespace nyxWM
                 NotificationService.Shutdown();
                 LauncherService.Shutdown();
                 RofiMenuService.Shutdown();
+                TerminalWindowService.CloseAll();
                 renderTimer?.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -345,10 +356,26 @@ namespace nyxWM
                 Console.WriteLine("Failed to register toggle Rofi menu hotkey.");
             }
 
+            // Open a new terminal window hotkey
+            uint terminalModifiers;
+            uint terminalKey;
+            if (!ParseHotkeyString(config.Hotkeys.OpenTerminal, mainmod, out terminalModifiers, out terminalKey))
+            {
+                Console.WriteLine("Invalid open terminal hotkey in config. Using default.");
+                ParseHotkeyString("mainmod + enter", mainmod, out terminalModifiers, out terminalKey);
+            }
+            if (RegisterHotKey(IntPtr.Zero, HOTKEY_ID_OPEN_TERMINAL, terminalModifiers, terminalKey))
+            {
+                RegisteredHotkeyIds.Add(HOTKEY_ID_OPEN_TERMINAL);
+            }
+            else
+            {
+                Console.WriteLine("Failed to register open terminal hotkey.");
+            }
+
             // Register launch app hotkeys
             RegisterLaunchAppHotkeys(mainmod);
         }
-
         /// <summary>
         /// Unregisters every OS hotkey this process registered and clears the
         /// bookkeeping used to route them. Called before a fresh registration so
@@ -636,6 +663,13 @@ namespace nyxWM
                 {
                     LauncherService.Hide();
                     RofiMenuService.Toggle();
+                    return true; // Message handled
+                }
+                else if (wParam == Program.HOTKEY_ID_OPEN_TERMINAL) // Open a new terminal window
+                {
+                    LauncherService.Hide();
+                    RofiMenuService.Close();
+                    TerminalWindowService.OpenNew();
                     return true; // Message handled
                 }
                 else if (Program.LaunchAppPaths.TryGetValue(wParam, out string? launchPath) && launchPath != null) // Launch a configured program

@@ -45,7 +45,7 @@ namespace nyxWM
 
         private ListBox? _ignoredList;
 
-        private readonly SettingsHotkeyBox?[] _hotkeyBoxes = new SettingsHotkeyBox?[7];
+        private readonly SettingsHotkeyBox?[] _hotkeyBoxes = new SettingsHotkeyBox?[8];
 
         private readonly List<LaunchAppRow> _launchRows = new();
 
@@ -300,6 +300,8 @@ namespace nyxWM
             _hotkeyBoxes[5] = AddHotkeyRow(panel, "Toggle launcher", _config.Hotkeys.ToggleLauncher, width, boxWidth, fieldHeight, y);
             y += RowStep;
             _hotkeyBoxes[6] = AddHotkeyRow(panel, "Toggle Rofi menu", _config.Hotkeys.ToggleRofiMenu, width, boxWidth, fieldHeight, y);
+            y += RowStep;
+            _hotkeyBoxes[7] = AddHotkeyRow(panel, "Open terminal window", _config.Hotkeys.OpenTerminal, width, boxWidth, fieldHeight, y);
         }
 
         private void BuildLaunchApps(SettingsContentPanel panel, int width)
@@ -879,7 +881,8 @@ namespace nyxWM
                 CenterActiveWindow = ValueOf(_hotkeyBoxes[3], "mainmod + f"),
                 ToggleGameMode = ValueOf(_hotkeyBoxes[4], "mainmod + g"),
                 ToggleLauncher = ValueOf(_hotkeyBoxes[5], "mainmod + d"),
-                ToggleRofiMenu = ValueOf(_hotkeyBoxes[6], "mainmod + q")
+                ToggleRofiMenu = ValueOf(_hotkeyBoxes[6], "mainmod + q"),
+                OpenTerminal = ValueOf(_hotkeyBoxes[7], "mainmod + enter")
             };
 
             return new ConfigSettings
