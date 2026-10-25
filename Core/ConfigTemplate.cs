@@ -99,10 +99,29 @@ namespace nyxWM
 
   // Visuals
 
-  // Accent colour of notification cards. Applies live, no restart needed.
-  // Values: Blue, Purple (Violet), White, Green, Cyan (LightBlue), Orange,
-  //         Red, Yellow. Case-insensitive. Unknown value falls back to Blue.
+  // UI mode: "Dark" (charcoal surfaces) or "Light" (pearl grey surfaces).
+  "ThemeMode": "Dark",
+
+  // Accent colour of the interface and notification cards.
+  // Options: White, Black, Red, Blue (default), Orange, Green, Purple, Cyan, Pink.
+  // Case-insensitive. Unknown value falls back to Blue.
   "Theme": "Blue",
+
+  // Blur the desktop behind the Rofi overlay. false = solid surface.
+  "GlassEnabled": true,
+
+  // Window opacity from 0.4 (very transparent) to 1.0 (fully opaque).
+  "WindowOpacity": 0.95,
+
+  // Manual interface scale multiplier. 1.0 = default size.
+  // Type: number 0.8-1.4. Lower = smaller overlays, higher = larger.
+  "UiScale": 1.0,
+
+  // Fade / slide / scale animations for overlays and notifications.
+  "SmoothAnimations": true,
+
+  // Window corner style: "Sharp", "Rounded" or "Smooth".
+  "CornerStyle": "Rounded",
 
 
   // Notifications
@@ -223,10 +242,29 @@ namespace nyxWM
             sb.AppendLine();
             sb.AppendLine("  // Visuals ");
             sb.AppendLine();
-            sb.AppendLine("  // Accent colour of notification cards. Applies live, no restart needed.");
-            sb.AppendLine("  // Values: Blue, Purple (Violet), White, Green, Cyan (LightBlue), Orange,");
-            sb.AppendLine("  //         Red, Yellow. Case-insensitive. Unknown value falls back to Blue.");
+            sb.AppendLine("  // UI mode: \"Dark\" (charcoal surfaces) or \"Light\" (pearl grey surfaces).");
+            sb.AppendLine($"  \"ThemeMode\": {Str(settings.ThemeMode)},");
+            sb.AppendLine();
+            sb.AppendLine("  // Accent colour of the interface and notification cards.");
+            sb.AppendLine("  // Options: White, Black, Red, Blue (default), Orange, Green, Purple, Cyan, Pink.");
+            sb.AppendLine("  // Case-insensitive. Unknown value falls back to Blue.");
             sb.AppendLine($"  \"Theme\": {Str(settings.Theme)},");
+            sb.AppendLine();
+            sb.AppendLine("  // Blur the desktop behind the Rofi overlay. false = solid surface.");
+            sb.AppendLine($"  \"GlassEnabled\": {Bool(settings.GlassEnabled)},");
+            sb.AppendLine();
+            sb.AppendLine("  // Window opacity from 0.4 (very transparent) to 1.0 (fully opaque).");
+            sb.AppendLine($"  \"WindowOpacity\": {Num(Math.Clamp(settings.WindowOpacity, 0.4f, 1f))},");
+            sb.AppendLine();
+            sb.AppendLine("  // Manual interface scale multiplier. 1.0 = default size.");
+            sb.AppendLine("  // Type: number 0.8-1.4. Lower = smaller overlays, higher = larger.");
+            sb.AppendLine($"  \"UiScale\": {Num(VisualPreferences.NormalizeUiScale(settings.UiScale))},");
+            sb.AppendLine();
+            sb.AppendLine("  // Fade / slide / scale animations for overlays and notifications.");
+            sb.AppendLine($"  \"SmoothAnimations\": {Bool(settings.SmoothAnimations)},");
+            sb.AppendLine();
+            sb.AppendLine("  // Window corner style: \"Sharp\", \"Rounded\" or \"Smooth\".");
+            sb.AppendLine($"  \"CornerStyle\": {Str(settings.CornerStyle)},");
             sb.AppendLine();
             sb.AppendLine();
             sb.AppendLine("  // Notifications ");

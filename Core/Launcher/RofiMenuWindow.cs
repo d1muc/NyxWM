@@ -21,6 +21,10 @@ namespace nyxWM
         private const int WS_EX_TOOLWINDOW = 0x00000080;
         private const int CS_DROPSHADOW = 0x00020000;
 
+        private const int VK_LBUTTON = 0x01;
+        private const int VK_RBUTTON = 0x02;
+        private const int VK_MBUTTON = 0x04;
+
         private const float BaseWidthDip = 540f;
         private const float BaseHeightDip = 560f;
         private const float CornerRadiusDip = 18f;
@@ -50,6 +54,10 @@ namespace nyxWM
         private readonly WinFormsTimer _timer;
         private readonly Stopwatch _clock = Stopwatch.StartNew();
         private readonly Color _fieldColor;
+        private readonly bool _glass;
+        private readonly bool _animations;
+        private readonly float _windowOpacity;
+        private readonly float _cornerRadiusDip;
 
         private RectangleF _searchRect;
         private RectangleF _footerRect;
@@ -93,19 +101,25 @@ namespace nyxWM
 
             Size = new Size(_baseWidth, _baseHeight);
             Location = new Point(_baseX, _baseY);
-            Opacity = 0.0;
 
-            _fieldColor = Blend(_theme.BackgroundTop, Color.White, 0.055f);
+            _glass = VisualPreferences.GlassEnabled;
+            _animations = VisualPreferences.SmoothAnimations;
+            _windowOpacity = VisualPreferences.WindowOpacity;
+            _cornerRadiusDip = VisualPreferences.CornerRadius(CornerRadiusDip);
 
-            _searchFont = new Font("Segoe UI", 11f, FontStyle.Regular, GraphicsUnit.Point);
-            _badgeFont = new Font("Segoe UI", 7.75f, FontStyle.Regular, GraphicsUnit.Point);
+            Opacity = _animations ? 0.0 : _windowOpacity;
+
+            _fieldColor = _theme.FieldBackground;
+
+            _searchFont = VisualPreferences.CreateUiFont("Segoe UI", 11f, FontStyle.Regular);
+            _badgeFont = VisualPreferences.CreateUiFont("Segoe UI", 7.75f, FontStyle.Regular);
 
             _search = new TextBox
             {
                 AutoSize = false,
                 BorderStyle = BorderStyle.None,
                 BackColor = _fieldColor,
-                ForeColor = Color.FromArgb(232, 238, 247),
+                ForeColor = _theme.TextPrimary,
                 Font = _searchFont,
                 PlaceholderText = "Search apps or type command...",
                 ShortcutsEnabled = true
@@ -128,7 +142,7 @@ namespace nyxWM
             Controls.Add(_search);
 
             ApplyFilter();
-            ApplyLayout(EntryStartScale, 0f);
+            ApplyLayout(_animations ? EntryStartScale : 1f, 0f);
             ApplyRoundedRegion();
 
             _timer = new WinFormsTimer { Interval = 15 };
@@ -151,14 +165,21 @@ namespace nyxWM
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
 
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int virtualKey);
+
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
 
-            _backdrop = CaptureBackdrop();
+            _backdrop = _glass ? CaptureBackdrop() : null;
 
             _clock.Restart();
             _lastTickMs = 0.0;
+
+            if (!_animations)
+                _elapsedMs = EntryDurationMs;
+
             _timer.Start();
 
             Activate();
@@ -180,11 +201,19 @@ namespace nyxWM
         {
             base.OnDeactivate(e);
 
-            // Clicks outside the menu dismiss it, like Rofi. The short guard
-            // ignores the deactivation that can happen while the window is
-            // still appearing.
-            if (!_closing && _elapsedMs > 140f)
+            // Clicks outside the menu dismiss it, like Rofi. Keyboard-driven
+            // focus changes, such as switching the keyboard layout, must not
+            // close the menu. The short guard ignores the deactivation that can
+            // happen while the window is still appearing.
+            if (!_closing && _elapsedMs > 140f && IsMouseButtonDown())
                 BeginClose();
+        }
+
+        private static bool IsMouseButtonDown()
+        {
+            return (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0
+                   || (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0
+                   || (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -206,14 +235,18 @@ namespace nyxWM
             if (cardRect.Width <= 0f || cardRect.Height <= 0f)
                 return;
 
-            using GraphicsPath cardPath = CreateRoundedPath(cardRect, CornerRadiusDip * _scale);
+            using GraphicsPath cardPath = CreateRoundedPath(cardRect, _cornerRadiusDip * _scale);
 
             DrawGlass(graphics, cardRect, cardPath);
             DrawAccentGlow(graphics);
             DrawSearchField(graphics);
             DrawFooter(graphics);
 
-            using var border = new Pen(Color.FromArgb(20, 255, 255, 255), borderWidth);
+            Color borderColor = _theme.IsLight
+                ? Color.FromArgb(28, 20, 22, 28)
+                : Color.FromArgb(20, 255, 255, 255);
+
+            using var border = new Pen(borderColor, borderWidth);
             graphics.DrawPath(border, cardPath);
         }
 
@@ -226,15 +259,23 @@ namespace nyxWM
                 graphics.DrawImage(_backdrop, new Rectangle(0, 0, Width, Height));
                 graphics.Restore(state);
 
-                using (var tint = new SolidBrush(Color.FromArgb(214, 15, 16, 21)))
+                Color tintColor = _theme.IsLight
+                    ? Color.FromArgb(226, _theme.BackgroundTop)
+                    : Color.FromArgb(214, _theme.BackgroundTop);
+
+                using (var tint = new SolidBrush(tintColor))
                 {
                     graphics.FillPath(tint, cardPath);
                 }
 
+                Color shadeBottom = _theme.IsLight
+                    ? Color.FromArgb(18, 0, 0, 0)
+                    : Color.FromArgb(40, 0, 0, 0);
+
                 using var shade = new LinearGradientBrush(
                     cardRect,
                     Color.FromArgb(0, 0, 0, 0),
-                    Color.FromArgb(40, 0, 0, 0),
+                    shadeBottom,
                     LinearGradientMode.Vertical);
 
                 graphics.FillPath(shade, cardPath);
@@ -272,7 +313,11 @@ namespace nyxWM
 
             using (GraphicsPath fieldPath = CreateRoundedPath(_searchRect, 12f * _scale))
             {
-                using (var fill = new SolidBrush(Color.FromArgb(18, 255, 255, 255)))
+                Color fieldFill = _theme.IsLight
+                    ? Color.FromArgb(150, 255, 255, 255)
+                    : Color.FromArgb(18, 255, 255, 255);
+
+                using (var fill = new SolidBrush(fieldFill))
                 {
                     graphics.FillPath(fill, fieldPath);
                 }
@@ -293,7 +338,7 @@ namespace nyxWM
 
             Color iconColor = hasText
                 ? _theme.Accent
-                : Color.FromArgb(158, 168, 188);
+                : _theme.TextMuted;
 
             using var pen = new Pen(iconColor, MathF.Max(1.2f, 1.6f * _scale))
             {
@@ -366,8 +411,8 @@ namespace nyxWM
 
             float x = _footerRect.Left + (_footerRect.Width - total) / 2f;
 
-            using var keyBrush = new SolidBrush(Color.FromArgb(192, 200, 214));
-            using var labelBrush = new SolidBrush(Color.FromArgb(118, 128, 146));
+            using var keyBrush = new SolidBrush(_theme.TextPrimary);
+            using var labelBrush = new SolidBrush(_theme.TextMuted);
             using var keyFormat = new StringFormat
             {
                 Alignment = StringAlignment.Center,
@@ -383,12 +428,19 @@ namespace nyxWM
             {
                 var badge = new RectangleF(x, y, keyWidths[i], badgeHeight);
 
+                Color badgeFill = _theme.IsLight
+                    ? Color.FromArgb(10, 0, 0, 0)
+                    : Color.FromArgb(16, 255, 255, 255);
+                Color badgeBorder = _theme.IsLight
+                    ? Color.FromArgb(26, 0, 0, 0)
+                    : Color.FromArgb(26, 255, 255, 255);
+
                 using (GraphicsPath path = CreateRoundedPath(badge, 6f * _scale))
-                using (var fill = new SolidBrush(Color.FromArgb(16, 255, 255, 255)))
+                using (var fill = new SolidBrush(badgeFill))
                 {
                     graphics.FillPath(fill, path);
 
-                    using var border = new Pen(Color.FromArgb(26, 255, 255, 255), MathF.Max(1f, _scale));
+                    using var border = new Pen(badgeBorder, MathF.Max(1f, _scale));
                     graphics.DrawPath(border, path);
                 }
 
@@ -514,6 +566,13 @@ namespace nyxWM
             if (_closing)
                 return;
 
+            if (!_animations)
+            {
+                _timer.Stop();
+                Close();
+                return;
+            }
+
             _closing = true;
             _closeElapsedMs = 0f;
         }
@@ -546,13 +605,21 @@ namespace nyxWM
 
             float easedClose = EaseInCubic(closeProgress);
 
-            Opacity = Math.Clamp(easedEntry * (1f - easedClose), 0.0, 1.0);
+            float fade = _animations
+                ? easedEntry * (1f - easedClose)
+                : 1f - easedClose;
 
-            float visual = EntryStartScale + (1f - EntryStartScale) * easedEntry;
+            Opacity = Math.Clamp(fade * _windowOpacity, 0.0, 1.0);
+
+            float visual = _animations
+                ? EntryStartScale + (1f - EntryStartScale) * easedEntry
+                : 1f;
             visual *= 1f - (1f - ExitEndScale) * easedClose;
 
-            float slide = (1f - easedEntry) * EntrySlideDip * _scale
-                          + easedClose * ExitSlideDip * _scale;
+            float slide = _animations
+                ? (1f - easedEntry) * EntrySlideDip * _scale
+                  + easedClose * ExitSlideDip * _scale
+                : 0f;
 
             ApplyLayout(visual, slide);
             _list.Advance(dtMs);
@@ -686,7 +753,7 @@ namespace nyxWM
 
             using GraphicsPath path = CreateRoundedPath(
                 new RectangleF(0f, 0f, Width, Height),
-                CornerRadiusDip * _scale);
+                _cornerRadiusDip * _scale);
 
             Region? previous = Region;
             Region = new Region(path);
@@ -724,17 +791,6 @@ namespace nyxWM
         {
             float clamped = Math.Clamp(progress, 0f, 1f);
             return clamped * clamped * clamped;
-        }
-
-        private static Color Blend(Color background, Color tint, float amount)
-        {
-            float clamped = Math.Clamp(amount, 0f, 1f);
-
-            return Color.FromArgb(
-                background.A,
-                (int)MathF.Round(background.R + (tint.R - background.R) * clamped),
-                (int)MathF.Round(background.G + (tint.G - background.G) * clamped),
-                (int)MathF.Round(background.B + (tint.B - background.B) * clamped));
         }
 
         private static GraphicsPath CreateRoundedPath(RectangleF rect, float radius)

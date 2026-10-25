@@ -101,9 +101,12 @@ namespace nyxWM
                 return;
 
             _position = ResolvePosition();
+            _dpiScale = GetDpiScale();
 
             float scale = _dpiScale;
-            NotificationTheme theme = NotificationThemeResolver.Resolve(ConfigManager.GetLiveTheme());
+            NotificationTheme theme = NotificationThemeResolver.Resolve(
+                ConfigManager.GetLiveTheme(),
+                ConfigManager.Current.ThemeMode);
             Rectangle work = Screen.PrimaryScreen?.WorkingArea
                              ?? new Rectangle(0, 0, 1920, 1080);
             Size size = NotificationCard.Measure(scale);
@@ -329,12 +332,12 @@ namespace nyxWM
             try
             {
                 using Graphics graphics = Graphics.FromHwnd(IntPtr.Zero);
-                return Math.Clamp(graphics.DpiX / 96f, 1f, 3f);
+                return Math.Clamp(graphics.DpiX / 96f, 1f, 3f) * VisualPreferences.UiScale;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"NotificationService: DPI probe failed: {ex.Message}");
-                return 1f;
+                return VisualPreferences.UiScale;
             }
         }
     }

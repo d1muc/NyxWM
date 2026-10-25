@@ -31,6 +31,9 @@ namespace nyxWM
         private readonly NotificationTheme _theme;
         private readonly Font _titleFont;
         private readonly Font _bodyFont;
+        private readonly bool _animations;
+        private readonly float _windowOpacity;
+        private readonly float _cornerRadius;
 
         private float _x;
         private float _y;
@@ -61,6 +64,9 @@ namespace nyxWM
             _body = body ?? string.Empty;
             _scale = scale;
             _theme = theme;
+            _animations = VisualPreferences.SmoothAnimations;
+            _windowOpacity = VisualPreferences.WindowOpacity;
+            _cornerRadius = VisualPreferences.CornerRadius(BaseRadius);
             LifetimeMs = Math.Max(800, durationMs);
 
             FormBorderStyle = FormBorderStyle.None;
@@ -77,8 +83,8 @@ namespace nyxWM
 
             Size = Measure(scale);
 
-            _titleFont = new Font("Segoe UI", 10.5f, FontStyle.Bold, GraphicsUnit.Point);
-            _bodyFont = new Font("Segoe UI", 9.25f, FontStyle.Regular, GraphicsUnit.Point);
+            _titleFont = VisualPreferences.CreateUiFont("Segoe UI", 10.5f, FontStyle.Bold);
+            _bodyFont = VisualPreferences.CreateUiFont("Segoe UI", 9.25f, FontStyle.Regular);
 
             TargetX = targetX;
             TargetY = targetY;
@@ -86,7 +92,7 @@ namespace nyxWM
             _y = startY;
 
             Location = new Point((int)MathF.Round(_x), (int)MathF.Round(_y));
-            Opacity = 0.0;
+            Opacity = _animations ? 0.0 : _windowOpacity;
 
             ApplyRoundedRegion();
         }
@@ -121,23 +127,35 @@ namespace nyxWM
             {
                 _closeElapsedMs += dtMs;
                 float closeProgress = Math.Clamp(_closeElapsedMs / FadeOutMs, 0f, 1f);
-                Opacity = _opacityAtClose * (1f - closeProgress);
+                Opacity = _animations
+                    ? _opacityAtClose * (1f - closeProgress)
+                    : 0.0;
             }
             else
             {
-                float entryProgress = Math.Clamp((float)(AgeMs / FadeInMs), 0f, 1f);
+                float entryProgress = _animations
+                    ? Math.Clamp((float)(AgeMs / FadeInMs), 0f, 1f)
+                    : 1f;
                 float eased = 1f - MathF.Pow(1f - entryProgress, 3f);
-                Opacity = eased;
+                Opacity = eased * _windowOpacity;
             }
 
-            float factor = 1f - MathF.Exp(-PositionSmoothingPerSecond * dtMs / 1000f);
-            _x += (TargetX - _x) * factor;
-            _y += (TargetY - _y) * factor;
+            if (_animations)
+            {
+                float factor = 1f - MathF.Exp(-PositionSmoothingPerSecond * dtMs / 1000f);
+                _x += (TargetX - _x) * factor;
+                _y += (TargetY - _y) * factor;
 
-            if (MathF.Abs(TargetX - _x) < 0.5f)
+                if (MathF.Abs(TargetX - _x) < 0.5f)
+                    _x = TargetX;
+                if (MathF.Abs(TargetY - _y) < 0.5f)
+                    _y = TargetY;
+            }
+            else
+            {
                 _x = TargetX;
-            if (MathF.Abs(TargetY - _y) < 0.5f)
                 _y = TargetY;
+            }
 
             Location = new Point((int)MathF.Round(_x), (int)MathF.Round(_y));
             Invalidate();
@@ -151,6 +169,12 @@ namespace nyxWM
             _closing = true;
             _closeElapsedMs = 0f;
             _opacityAtClose = (float)Opacity;
+
+            if (!_animations)
+            {
+                _closeElapsedMs = FadeOutMs;
+                Opacity = 0.0;
+            }
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -169,7 +193,7 @@ namespace nyxWM
                 Width - inset * 2f,
                 Height - inset * 2f);
 
-            using (GraphicsPath cardPath = CreateRoundedPath(cardRect, BaseRadius * _scale))
+            using (GraphicsPath cardPath = CreateRoundedPath(cardRect, _cornerRadius * _scale))
             using (var fill = new LinearGradientBrush(
                        cardRect,
                        _theme.BackgroundTop,
@@ -219,8 +243,8 @@ namespace nyxWM
 
             float titleY = hasBody ? 10f * _scale : 20f * _scale;
 
-            using var titleBrush = new SolidBrush(Color.FromArgb(245, 245, 248));
-            using var bodyBrush = new SolidBrush(Color.FromArgb(158, 163, 174));
+            using var titleBrush = new SolidBrush(_theme.TextPrimary);
+            using var bodyBrush = new SolidBrush(_theme.TextMuted);
             using var format = new StringFormat
             {
                 Trimming = StringTrimming.EllipsisCharacter,
@@ -271,7 +295,7 @@ namespace nyxWM
         {
             using GraphicsPath path = CreateRoundedPath(
                 new RectangleF(0f, 0f, Width, Height),
-                BaseRadius * _scale);
+                _cornerRadius * _scale);
 
             Region? previous = Region;
             Region = new Region(path);

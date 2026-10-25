@@ -183,7 +183,7 @@ namespace nyxWM
         /// <summary>
         /// Creates default configuration settings.
         /// </summary>
-        private static ConfigSettings CreateDefaultSettings()
+        internal static ConfigSettings CreateDefaultSettings()
         {
             return new ConfigSettings
             {
@@ -194,6 +194,12 @@ namespace nyxWM
                 PauseOnFullscreen = true,
                 MainMod = "CONTROL+ALT",
                 Theme = "Blue",
+                ThemeMode = "Dark",
+                GlassEnabled = true,
+                WindowOpacity = 0.95f,
+                UiScale = 1.0f,
+                SmoothAnimations = true,
+                CornerStyle = "Rounded",
                 CameraMoveButton = "MBUTTON",
                 IgnoredWindowClassNames = new[] { "Shell_TrayWnd", "Progman", "WorkerW", "CEF-OSC-WIDGET", "NvOverlayWindow" },
                 Hotkeys = new HotkeySettings
@@ -255,6 +261,39 @@ namespace nyxWM
             {
                 Console.WriteLine($"Invalid theme: {settings.Theme}. Using default Blue.");
                 settings.Theme = "Blue";
+                changed = true;
+            }
+
+            // Visuals: theme mode, glass, opacity, animations and corner style.
+            if (!string.Equals(settings.ThemeMode, "Dark", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(settings.ThemeMode, "Light", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"Invalid theme mode: {settings.ThemeMode}. Using default Dark.");
+                settings.ThemeMode = "Dark";
+                changed = true;
+            }
+
+            if (settings.WindowOpacity <= 0f || settings.WindowOpacity > 1f)
+            {
+                Console.WriteLine($"Invalid window opacity: {settings.WindowOpacity}. Using default 0.95.");
+                settings.WindowOpacity = 0.95f;
+                changed = true;
+            }
+
+            if (settings.UiScale < VisualPreferences.MinUiScale ||
+                settings.UiScale > VisualPreferences.MaxUiScale)
+            {
+                Console.WriteLine($"Invalid UI scale: {settings.UiScale}. Using default 1.0.");
+                settings.UiScale = 1.0f;
+                changed = true;
+            }
+
+            if (!string.Equals(settings.CornerStyle, "Sharp", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(settings.CornerStyle, "Rounded", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(settings.CornerStyle, "Smooth", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"Invalid corner style: {settings.CornerStyle}. Using default Rounded.");
+                settings.CornerStyle = "Rounded";
                 changed = true;
             }
 
@@ -607,10 +646,42 @@ namespace nyxWM
         public string MainMod { get; set; } = string.Empty;
 
         /// <summary>
-        /// Accent theme for notifications: Blue (default), Purple, White, Green,
-        /// Cyan, Orange, Red or Yellow.
+        /// Accent theme: White, Black, Red, Blue (default), Orange, Green,
+        /// Purple, Cyan or Pink. Legacy names are migrated automatically.
         /// </summary>
         public string? Theme { get; set; }
+
+        /// <summary>
+        /// UI mode: "Dark" (default) or "Light".
+        /// </summary>
+        public string ThemeMode { get; set; } = "Dark";
+
+        /// <summary>
+        /// Blurred desktop backdrop behind the Rofi overlay. False uses a solid
+        /// surface instead.
+        /// </summary>
+        public bool GlassEnabled { get; set; } = true;
+
+        /// <summary>
+        /// Window opacity from 0.4 (very transparent) to 1.0 (fully opaque).
+        /// </summary>
+        public float WindowOpacity { get; set; } = 0.95f;
+
+        /// <summary>
+        /// Manual interface scale multiplier. 1.0 is the default size;
+        /// values below and above it make overlays smaller or larger.
+        /// </summary>
+        public float UiScale { get; set; } = 1.0f;
+
+        /// <summary>
+        /// Fade / slide / scale animations for overlays and notifications.
+        /// </summary>
+        public bool SmoothAnimations { get; set; } = true;
+
+        /// <summary>
+        /// Window corner style: "Sharp", "Rounded" (default) or "Smooth".
+        /// </summary>
+        public string CornerStyle { get; set; } = "Rounded";
 
         /// <summary>
         /// The button or key combination used to move the camera (e.g., "MBUTTON", "ALT+LEFT").

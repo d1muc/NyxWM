@@ -41,7 +41,7 @@ namespace nyxWM
             }
 
             string text = Items[e.Index]?.ToString() ?? string.Empty;
-            Color textColor = selected ? Color.White : SettingsPalette.TextPrimary;
+            Color textColor = SettingsPalette.TextPrimary;
 
             TextRenderer.DrawText(
                 e.Graphics,

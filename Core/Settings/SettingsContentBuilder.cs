@@ -18,7 +18,7 @@ namespace nyxWM
 
         private static readonly string[] ThemeOptions =
         {
-            "Blue", "Purple", "White", "Green", "Cyan", "Orange", "Red", "Yellow"
+            "White", "Black", "Red", "Blue", "Orange", "Green", "Purple", "Cyan", "Pink"
         };
 
         private static readonly string[] PositionOptions =
@@ -49,7 +49,13 @@ namespace nyxWM
 
         private readonly List<LaunchAppRow> _launchRows = new();
 
-        private SettingsComboBox? _themeCombo;
+        private SettingsSegmented? _themeModeSegmented;
+        private SettingsComboBox? _accentCombo;
+        private SettingsToggle? _glassToggle;
+        private SettingsSlider? _opacitySlider;
+        private SettingsSlider? _uiScaleSlider;
+        private SettingsToggle? _animationsToggle;
+        private SettingsSegmented? _cornerSegmented;
 
         private SettingsToggle? _notifEnabledToggle;
         private SettingsComboBox? _positionCombo;
@@ -61,9 +67,11 @@ namespace nyxWM
             _scale = Math.Clamp(scale, 0.75f, 3f);
             _config = config ?? throw new ArgumentNullException(nameof(config));
 
-            _labelFont = new Font("Segoe UI", 9.75f, FontStyle.Regular, GraphicsUnit.Point);
-            _fieldFont = new Font("Segoe UI", 9.5f, FontStyle.Regular, GraphicsUnit.Point);
-            _boldFont = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point);
+            _labelFont = VisualPreferences.CreateUiFont("Segoe UI", 9.75f, FontStyle.Regular);
+            _fieldFont = VisualPreferences.CreateUiFont("Segoe UI", 9.5f, FontStyle.Regular);
+            _boldFont = VisualPreferences.CreateUiFont("Segoe UI", 10f, FontStyle.Bold);
+
+            SettingsPalette.Apply(_theme);
         }
 
         internal SettingsContentPanel[] Build(int width, int height)
@@ -423,22 +431,199 @@ namespace nyxWM
 
         private void BuildVisuals(SettingsContentPanel panel, int width)
         {
+            float cardWidth = width - Pad * 2f;
+            float cardHeight = 116f * _scale;
+            float themesHeight = 160f * _scale;
+            float gap = 12f * _scale;
+            float innerPad = 14f * _scale;
+            float innerWidth = cardWidth - innerPad * 2f;
+            float rowHeight = 28f * _scale;
+            float row1 = 40f * _scale;
+            float row2 = 76f * _scale;
+            float row3 = 112f * _scale;
+
             float y = 8f * _scale;
-            float labelWidth = width * 0.42f;
 
-            AddLabel(panel, "Accent theme", Pad, y, labelWidth);
+            var themes = new SettingsCardPanel(_theme, _scale, "Themes & Appearance")
+            {
+                Bounds = Rect(Pad, y, cardWidth, themesHeight)
+            };
+            panel.Controls.Add(themes);
 
-            var combo = new SettingsComboBox(_theme.Accent)
+            AddLabel(themes, "Theme mode", innerPad, row1, innerWidth * 0.5f);
+            var mode = new SettingsSegmented(_theme, new[] { "Dark", "Light" })
+            {
+                Bounds = Rect(
+                    cardWidth - innerPad - 190f * _scale,
+                    row1,
+                    190f * _scale,
+                    rowHeight)
+            };
+            mode.Font = _fieldFont;
+            mode.SelectedIndex =
+                VisualPreferences.NormalizeMode(_config.ThemeMode) == VisualPreferences.ModeLight ? 1 : 0;
+            themes.Controls.Add(mode);
+            _themeModeSegmented = mode;
+
+            AddLabel(themes, "Accent color", innerPad, row2, innerWidth * 0.5f);
+            var accent = new SettingsComboBox(_theme.Accent)
             {
                 Font = _fieldFont,
-                Bounds = Rect(width - Pad - 220f * _scale, y, 220f * _scale, RowHeight)
+                Bounds = Rect(
+                    cardWidth - innerPad - 190f * _scale,
+                    row2,
+                    190f * _scale,
+                    rowHeight)
+            };
+            accent.Items.AddRange(ThemeOptions);
+            accent.SelectedItem = NotificationThemeResolver.NormalizeName(_config.Theme);
+            themes.Controls.Add(accent);
+            _accentCombo = accent;
+
+            AddLabel(themes, "Interface scale (%)", innerPad, row3, innerWidth * 0.5f);
+
+            float scaleBoxWidth = 54f * _scale;
+            float scaleSliderWidth = 140f * _scale;
+            float scaleSliderX = cardWidth - innerPad - scaleBoxWidth - 8f * _scale - scaleSliderWidth;
+            double uiScalePercent = VisualPreferences.NormalizeUiScale(_config.UiScale) * 100.0;
+
+            var uiScaleSlider = new SettingsSlider(_theme.Accent)
+            {
+                Minimum = VisualPreferences.MinUiScale * 100.0,
+                Maximum = VisualPreferences.MaxUiScale * 100.0,
+                Value = uiScalePercent,
+                Bounds = Rect(scaleSliderX, row3, scaleSliderWidth, rowHeight)
             };
 
-            combo.ItemHeight = Math.Max(18, (int)MathF.Round(24f * _scale));
-            combo.Items.AddRange(ThemeOptions);
-            SelectComboValue(combo, _theme.Name);
-            panel.Controls.Add(combo);
-            _themeCombo = combo;
+            TextBox uiScaleBox = CreateNumericBox(
+                Math.Round(uiScalePercent).ToString(CultureInfo.InvariantCulture),
+                allowDecimal: false);
+
+            uiScaleBox.Bounds = Rect(
+                cardWidth - innerPad - scaleBoxWidth,
+                row3,
+                scaleBoxWidth,
+                rowHeight);
+
+            themes.Controls.Add(uiScaleSlider);
+            themes.Controls.Add(uiScaleBox);
+            LinkSlider(uiScaleSlider, uiScaleBox);
+            _uiScaleSlider = uiScaleSlider;
+
+            y += themesHeight + gap;
+
+            var effects = new SettingsCardPanel(_theme, _scale, "Window Effects & Transparency")
+            {
+                Bounds = Rect(Pad, y, cardWidth, cardHeight)
+            };
+            panel.Controls.Add(effects);
+
+            _glassToggle = AddCardToggle(
+                effects,
+                "Enable glass / acrylic effect",
+                _config.GlassEnabled,
+                innerWidth,
+                innerPad,
+                row1,
+                rowHeight);
+
+            AddLabel(effects, "Window opacity (%)", innerPad, row2, innerWidth * 0.5f);
+
+            float boxWidth = 54f * _scale;
+            float sliderWidth = 140f * _scale;
+            float sliderX = cardWidth - innerPad - boxWidth - 8f * _scale - sliderWidth;
+            double opacityPercent = Math.Clamp((double)_config.WindowOpacity, 0.4, 1.0) * 100.0;
+
+            var opacitySlider = new SettingsSlider(_theme.Accent)
+            {
+                Minimum = 40.0,
+                Maximum = 100.0,
+                Value = opacityPercent,
+                Bounds = Rect(sliderX, row2, sliderWidth, rowHeight)
+            };
+
+            TextBox opacityBox = CreateNumericBox(
+                Math.Round(opacityPercent).ToString(CultureInfo.InvariantCulture),
+                allowDecimal: false);
+
+            opacityBox.Bounds = Rect(
+                cardWidth - innerPad - boxWidth,
+                row2,
+                boxWidth,
+                rowHeight);
+
+            effects.Controls.Add(opacitySlider);
+            effects.Controls.Add(opacityBox);
+            LinkSlider(opacitySlider, opacityBox);
+            _opacitySlider = opacitySlider;
+
+            y += cardHeight + gap;
+
+            var polish = new SettingsCardPanel(_theme, _scale, "UI Polish & Animations")
+            {
+                Bounds = Rect(Pad, y, cardWidth, cardHeight)
+            };
+            panel.Controls.Add(polish);
+
+            _animationsToggle = AddCardToggle(
+                polish,
+                "Smooth animations",
+                _config.SmoothAnimations,
+                innerWidth,
+                innerPad,
+                row1,
+                rowHeight);
+
+            AddLabel(polish, "Corner radius", innerPad, row2, innerWidth * 0.5f);
+            var corner = new SettingsSegmented(
+                _theme,
+                new[] { "Sharp", "Rounded", "Smooth" })
+            {
+                Bounds = Rect(
+                    cardWidth - innerPad - 240f * _scale,
+                    row2,
+                    240f * _scale,
+                    rowHeight)
+            };
+            corner.Font = _fieldFont;
+
+            string cornerStyle = VisualPreferences.NormalizeCorner(_config.CornerStyle);
+            corner.SelectedIndex = cornerStyle switch
+            {
+                VisualPreferences.CornerSharp => 0,
+                VisualPreferences.CornerSmooth => 2,
+                _ => 1
+            };
+
+            polish.Controls.Add(corner);
+            _cornerSegmented = corner;
+        }
+
+        private SettingsToggle AddCardToggle(
+            Control card,
+            string label,
+            bool value,
+            float innerWidth,
+            float innerPad,
+            float y,
+            float rowHeight)
+        {
+            AddLabel(card, label, innerPad, y, innerWidth * 0.7f);
+
+            var toggle = new SettingsToggle(_theme.Accent)
+            {
+                Checked = value,
+                Size = new Size(
+                    (int)MathF.Round(46f * _scale),
+                    (int)MathF.Round(26f * _scale))
+            };
+
+            toggle.Location = new Point(
+                (int)MathF.Round(innerPad + innerWidth - toggle.Width),
+                (int)MathF.Round(y + (rowHeight - toggle.Height) / 2f));
+
+            card.Controls.Add(toggle);
+            return toggle;
         }
 
         private void BuildNotifications(SettingsContentPanel panel, int width)
@@ -710,7 +895,14 @@ namespace nyxWM
                 IgnoredWindowClassNames = CollectList(_ignoredList),
                 Hotkeys = hotkeys,
                 LaunchApps = CollectLaunchApps(),
-                Theme = _themeCombo?.SelectedItem?.ToString() ?? "Blue",
+                ThemeMode = _themeModeSegmented?.SelectedOption ?? VisualPreferences.ModeDark,
+                Theme = _accentCombo?.SelectedItem?.ToString()
+                        ?? NotificationThemeResolver.DefaultAccentName,
+                GlassEnabled = _glassToggle?.Checked ?? true,
+                WindowOpacity = ParseOpacity(_opacitySlider?.Value),
+                UiScale = ParseUiScale(_uiScaleSlider?.Value),
+                SmoothAnimations = _animationsToggle?.Checked ?? true,
+                CornerStyle = _cornerSegmented?.SelectedOption ?? VisualPreferences.CornerRounded,
                 Notifications = new NotificationSettings
                 {
                     Enabled = _notifEnabledToggle?.Checked ?? true,
@@ -749,6 +941,25 @@ namespace nyxWM
         {
             int duration = value is double number ? (int)Math.Round(number) : 3200;
             return Math.Clamp(duration, 800, 20000);
+        }
+
+        private static float ParseOpacity(double? value)
+        {
+            if (value is not double number || double.IsNaN(number) || double.IsInfinity(number))
+                return 0.95f;
+
+            return (float)Math.Clamp(number / 100.0, 0.4, 1.0);
+        }
+
+        private static float ParseUiScale(double? value)
+        {
+            if (value is not double number || double.IsNaN(number) || double.IsInfinity(number))
+                return 1.0f;
+
+            return (float)Math.Clamp(
+                number / 100.0,
+                VisualPreferences.MinUiScale,
+                VisualPreferences.MaxUiScale);
         }
 
         private static string[] CollectList(ListBox? list)

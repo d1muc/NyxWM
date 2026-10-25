@@ -59,6 +59,10 @@ namespace nyxWM
         private readonly NotificationTheme _theme;
         private readonly float _scale;
         private readonly Action<ConfigSettings>? _onSave;
+        private readonly Action? _onReset;
+        private readonly float _windowOpacity;
+        private readonly bool _animations;
+        private readonly float _cornerRadiusDip;
         private readonly Font _titleFont;
         private readonly Font _buttonFont;
         private readonly WinFormsTimer _timer;
@@ -98,11 +102,19 @@ namespace nyxWM
         private int _transitionDirection;
         private float _transitionElapsedMs;
 
-        internal SettingsWindow(NotificationTheme theme, float scale, Action<ConfigSettings>? onSave)
+        internal SettingsWindow(
+            NotificationTheme theme,
+            float scale,
+            Action<ConfigSettings>? onSave,
+            Action? onReset)
         {
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
             _scale = Math.Clamp(scale, 0.75f, 3f);
             _onSave = onSave;
+            _onReset = onReset;
+            _windowOpacity = VisualPreferences.WindowOpacity;
+            _animations = VisualPreferences.SmoothAnimations;
+            _cornerRadiusDip = VisualPreferences.CornerRadius(CornerRadiusDip);
 
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
@@ -124,8 +136,8 @@ namespace nyxWM
             _targetLocation = ResolveCenterLocation(width, height);
             Location = _targetLocation;
 
-            _titleFont = new Font("Segoe UI", 15f, FontStyle.Bold, GraphicsUnit.Point);
-            _buttonFont = new Font("Segoe UI", 9.75f, FontStyle.Bold, GraphicsUnit.Point);
+            _titleFont = VisualPreferences.CreateUiFont("Segoe UI", 15f, FontStyle.Bold);
+            _buttonFont = VisualPreferences.CreateUiFont("Segoe UI", 9.75f, FontStyle.Bold);
 
             float pad = PaddingDip * _scale;
             float buttonWidth = ButtonWidthDip * _scale;
@@ -171,7 +183,7 @@ namespace nyxWM
             _indicatorLeft = _tabRects[_activeTab].Left;
             _indicatorRight = _tabRects[_activeTab].Right;
 
-            Opacity = 0.0;
+            Opacity = _animations ? 0.0 : _windowOpacity;
             ApplyRoundedRegion();
 
             _timer = new WinFormsTimer { Interval = 15 };
@@ -217,7 +229,7 @@ namespace nyxWM
             if (cardRect.Width <= 0f || cardRect.Height <= 0f)
                 return;
 
-            using (GraphicsPath cardPath = CreateRoundedPath(cardRect, CornerRadiusDip * _scale))
+            using (GraphicsPath cardPath = CreateRoundedPath(cardRect, _cornerRadiusDip * _scale))
             using (var fill = new LinearGradientBrush(
                        cardRect,
                        _theme.BackgroundTop,
@@ -321,21 +333,25 @@ namespace nyxWM
         {
             _elapsedMs += dtMs;
 
-            float entryProgress = Math.Clamp(_elapsedMs / EntryDurationMs, 0f, 1f);
+            float entryProgress = _animations
+                ? Math.Clamp(_elapsedMs / EntryDurationMs, 0f, 1f)
+                : 1f;
             float easedEntry = EaseOutCubic(entryProgress);
 
             float closeProgress = 0f;
-            if (_closing)
+            if (_closing && _animations)
             {
                 _closeElapsedMs += dtMs;
                 closeProgress = Math.Clamp(_closeElapsedMs / ExitDurationMs, 0f, 1f);
             }
 
             float easedClose = EaseOutCubic(closeProgress);
-            Opacity = Math.Clamp(easedEntry * (1f - easedClose), 0.0, 1.0);
+            Opacity = Math.Clamp(easedEntry * (1f - easedClose) * _windowOpacity, 0.0, 1.0);
 
-            float slide = (1f - easedEntry) * EntrySlideDip * _scale
-                          + easedClose * ExitSlideDip * _scale;
+            float slide = _animations
+                ? (1f - easedEntry) * EntrySlideDip * _scale
+                  + easedClose * ExitSlideDip * _scale
+                : 0f;
 
             var location = new Point(
                 _targetLocation.X,
@@ -383,11 +399,23 @@ namespace nyxWM
             _pressedButton = ButtonNone;
             _pressedTab = -1;
             Cursor = Cursors.Default;
+
+            if (!_animations)
+            {
+                _timer.Stop();
+                Close();
+            }
         }
 
         private void OpenResetConfirm()
         {
-            ResetConfirmWindow.Open();
+            ResetConfirmWindow.Open(PerformReset);
+        }
+
+        private void PerformReset()
+        {
+            _onReset?.Invoke();
+            BeginClose();
         }
 
         private void SetActiveTab(int index)
@@ -416,7 +444,16 @@ namespace nyxWM
             from.Enabled = false;
             to.Enabled = true;
 
-            Invalidate();
+            if (!_animations)
+            {
+                _transitionFrom = null;
+                _transitionTo = null;
+                _transitionDirection = 0;
+                from.Visible = false;
+                from.Enabled = true;
+                to.Left = 0;
+                Invalidate();
+            }
         }
 
         private void AdvanceTabTransition(float dtMs)
@@ -512,7 +549,7 @@ namespace nyxWM
                 graphics.FillPath(accent, barPath);
             }
 
-            using var titleBrush = new SolidBrush(Color.FromArgb(245, 246, 250));
+            using var titleBrush = new SolidBrush(_theme.TextPrimary);
             graphics.DrawString(
                 "Settings",
                 _titleFont,
@@ -543,7 +580,7 @@ namespace nyxWM
                 else if (hover > 0.01f)
                 {
                     int alpha = (int)Math.Clamp(12f * hover, 0f, 255f);
-                    using var fill = new SolidBrush(Color.FromArgb(alpha, 236, 239, 246));
+                    using var fill = new SolidBrush(Color.FromArgb(alpha, _theme.Overlay));
                     graphics.FillPath(fill, path);
                 }
 
@@ -551,7 +588,7 @@ namespace nyxWM
                     ? 245
                     : (int)Math.Clamp(140f + 70f * hover, 0f, 255f);
 
-                using var textBrush = new SolidBrush(Color.FromArgb(textAlpha, 238, 241, 248));
+                using var textBrush = new SolidBrush(Color.FromArgb(textAlpha, _theme.TextPrimary));
                 using var format = new StringFormat
                 {
                     Alignment = StringAlignment.Center,
@@ -582,7 +619,7 @@ namespace nyxWM
             float pad = PaddingDip * _scale;
             float dividerY = (TabStripTopDip + TabHeightDip + 10f) * _scale;
             using var divider = new Pen(
-                Color.FromArgb(38, 232, 236, 246),
+                Color.FromArgb(38, _theme.Overlay),
                 MathF.Max(1f, 0.9f * _scale));
             graphics.DrawLine(divider, pad, dividerY, Width - pad, dividerY);
         }
@@ -600,7 +637,7 @@ namespace nyxWM
 
             Color ghostTint = danger
                 ? Color.FromArgb(242, 255, 128, 134)
-                : Color.FromArgb(242, 236, 239, 246);
+                : Color.FromArgb(242, _theme.TextPrimary);
 
             using GraphicsPath path = CreateRoundedPath(rect, radius);
 
@@ -637,10 +674,10 @@ namespace nyxWM
             }
 
             Color textColor = accent
-                ? Color.FromArgb(18, 20, 26)
+                ? _theme.OnAccent
                 : danger
                     ? Color.FromArgb(255, 168, 174)
-                    : Color.FromArgb(235, 238, 245);
+                    : _theme.TextPrimary;
 
             using var textBrush = new SolidBrush(textColor);
             using var format = new StringFormat
@@ -711,7 +748,7 @@ namespace nyxWM
 
             using GraphicsPath path = CreateRoundedPath(
                 new RectangleF(0f, 0f, Width, Height),
-                CornerRadiusDip * _scale);
+                _cornerRadiusDip * _scale);
 
             Region? previous = Region;
             Region = new Region(path);

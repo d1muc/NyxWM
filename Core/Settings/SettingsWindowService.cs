@@ -36,7 +36,9 @@ namespace nyxWM
 
             try
             {
-                NotificationTheme theme = NotificationThemeResolver.Resolve(ConfigManager.GetLiveTheme());
+                NotificationTheme theme = NotificationThemeResolver.Resolve(
+                    ConfigManager.GetLiveTheme(),
+                    ConfigManager.Current.ThemeMode);
                 var window = new SettingsWindow(
                     theme,
                     GetDpiScale(),
@@ -44,6 +46,11 @@ namespace nyxWM
                     {
                         ConfigManager.Save(settings);
                         NotificationService.Show("Settings", "Config saved and reloaded");
+                    },
+                    () =>
+                    {
+                        ConfigManager.Save(ConfigManager.CreateDefaultSettings());
+                        NotificationService.Show("Settings", "All settings reset to defaults");
                     });
 
                 _window = window;
@@ -87,12 +94,12 @@ namespace nyxWM
             try
             {
                 using Graphics graphics = Graphics.FromHwnd(IntPtr.Zero);
-                return Math.Clamp(graphics.DpiX / 96f, 0.75f, 3f);
+                return Math.Clamp(graphics.DpiX / 96f, 0.75f, 3f) * VisualPreferences.UiScale;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"SettingsWindowService: DPI probe failed: {ex.Message}");
-                return 1f;
+                return VisualPreferences.UiScale;
             }
         }
     }

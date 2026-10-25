@@ -23,6 +23,7 @@ namespace nyxWM
 
         private readonly NotificationTheme _theme;
         private readonly float _scale;
+        private readonly bool _smooth = VisualPreferences.SmoothAnimations;
         private readonly Font _nameFont;
         private readonly Font _metaFont;
         private readonly Font _badgeFont;
@@ -43,10 +44,10 @@ namespace nyxWM
         {
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
             _scale = Math.Clamp(scale, 0.75f, 3f);
-            _nameFont = new Font("Segoe UI", 10.5f, FontStyle.Regular, GraphicsUnit.Point);
-            _metaFont = new Font("Segoe UI", 8.25f, FontStyle.Regular, GraphicsUnit.Point);
-            _badgeFont = new Font("Segoe UI", 7.75f, FontStyle.Regular, GraphicsUnit.Point);
-            _iconFont = new Font("Segoe UI", 9.5f, FontStyle.Bold, GraphicsUnit.Point);
+            _nameFont = VisualPreferences.CreateUiFont("Segoe UI", 10.5f, FontStyle.Regular);
+            _metaFont = VisualPreferences.CreateUiFont("Segoe UI", 8.25f, FontStyle.Regular);
+            _badgeFont = VisualPreferences.CreateUiFont("Segoe UI", 7.75f, FontStyle.Regular);
+            _iconFont = VisualPreferences.CreateUiFont("Segoe UI", 9.5f, FontStyle.Bold);
 
             SetStyle(
                 ControlStyles.UserPaint |
@@ -98,6 +99,12 @@ namespace nyxWM
             }
 
             EnsureSelectionVisible();
+
+            if (!_smooth)
+            {
+                SnapHighlight();
+                Invalidate();
+            }
         }
 
         internal void ActivateSelected(bool asAdministrator)
@@ -120,6 +127,21 @@ namespace nyxWM
 
             float targetTop = (_selectedIndex - _topIndex) * ItemHeight + 2f * _scale;
             float targetHeight = ItemHeight - 4f * _scale;
+
+            if (!_smooth)
+            {
+                if (!_highlightReady
+                    || MathF.Abs(_highlightTop - targetTop) > 0.01f
+                    || MathF.Abs(_highlightHeight - targetHeight) > 0.01f)
+                {
+                    _highlightTop = targetTop;
+                    _highlightHeight = targetHeight;
+                    _highlightReady = true;
+                    Invalidate();
+                }
+
+                return;
+            }
 
             if (!_highlightReady)
             {
@@ -213,15 +235,17 @@ namespace nyxWM
                 MathF.Max(1f, rowWidth - 4f * _scale),
                 MathF.Max(1f, _highlightHeight));
 
-            Color left = Color.FromArgb(74, _theme.Accent);
-            Color right = Color.FromArgb(10, _theme.Accent);
+            Color left = Color.FromArgb(_theme.IsLight ? 54 : 74, _theme.Accent);
+            Color right = Color.FromArgb(_theme.IsLight ? 6 : 10, _theme.Accent);
 
             using (GraphicsPath path = CreateRoundedPath(pill, 10f * _scale))
             using (var fill = new LinearGradientBrush(pill, left, right, LinearGradientMode.Horizontal))
             {
                 graphics.FillPath(fill, path);
 
-                using var border = new Pen(Color.FromArgb(58, _theme.Accent), MathF.Max(1f, _scale));
+                using var border = new Pen(
+                    Color.FromArgb(_theme.IsLight ? 78 : 58, _theme.Accent),
+                    MathF.Max(1f, _scale));
                 graphics.DrawPath(border, path);
             }
 
@@ -248,7 +272,9 @@ namespace nyxWM
                 itemHeight - 4f * _scale);
 
             using GraphicsPath path = CreateRoundedPath(pill, 10f * _scale);
-            using var fill = new SolidBrush(Color.FromArgb(12, 255, 255, 255));
+            using var fill = new SolidBrush(_theme.IsLight
+                ? Color.FromArgb(10, 0, 0, 0)
+                : Color.FromArgb(12, 255, 255, 255));
             graphics.FillPath(fill, path);
         }
 
@@ -278,8 +304,11 @@ namespace nyxWM
             var nameRect = new RectangleF(textLeft, y + 9f * _scale, textWidth, 20f * _scale);
             var categoryRect = new RectangleF(textLeft, y + 29f * _scale, textWidth, 16f * _scale);
 
-            using (var nameBrush = new SolidBrush(
-                       selected ? Color.FromArgb(248, 250, 253) : Color.FromArgb(216, 223, 234)))
+            Color nameColor = selected
+                ? (_theme.IsLight ? _theme.TextPrimary : Color.FromArgb(248, 250, 253))
+                : (_theme.IsLight ? Color.FromArgb(52, 57, 66) : Color.FromArgb(216, 223, 234));
+
+            using (var nameBrush = new SolidBrush(nameColor))
             using (var nameFormat = new StringFormat
                    {
                        Alignment = StringAlignment.Near,
@@ -294,7 +323,11 @@ namespace nyxWM
             if (!string.IsNullOrWhiteSpace(app.Category))
             {
                 using var metaBrush = new SolidBrush(
-                    selected ? Color.FromArgb(172, 188, 172) : Color.FromArgb(120, 132, 150));
+                    selected
+                        ? (_theme.IsLight
+                            ? Color.FromArgb(72, 78, 90)
+                            : Color.FromArgb(172, 188, 172))
+                        : _theme.TextMuted);
                 using var metaFormat = new StringFormat
                 {
                     Alignment = StringAlignment.Near,
@@ -324,7 +357,11 @@ namespace nyxWM
                 graphics.DrawImage(image, iconRect);
                 graphics.Restore(state);
 
-                using var iconBorder = new Pen(Color.FromArgb(46, 255, 255, 255), MathF.Max(1f, _scale));
+                using var iconBorder = new Pen(
+                    _theme.IsLight
+                        ? Color.FromArgb(30, 0, 0, 0)
+                        : Color.FromArgb(46, 255, 255, 255),
+                    MathF.Max(1f, _scale));
                 graphics.DrawPath(iconBorder, iconPath);
                 return;
             }
@@ -339,7 +376,9 @@ namespace nyxWM
                 graphics.FillPath(fill, iconPath);
             }
 
-            using (var border = new Pen(Color.FromArgb(selected ? 90 : 48, 255, 255, 255), MathF.Max(1f, _scale)))
+            using (var border = new Pen(
+                       Color.FromArgb(selected ? 90 : 48, 255, 255, 255),
+                       MathF.Max(1f, _scale)))
             {
                 graphics.DrawPath(border, iconPath);
             }
@@ -404,15 +443,21 @@ namespace nyxWM
             var badge = new RectangleF(left, top, width, height);
 
             using (GraphicsPath path = CreateRoundedPath(badge, height / 2f))
-            using (var fill = new SolidBrush(Color.FromArgb(16, 255, 255, 255)))
+            using (var fill = new SolidBrush(_theme.IsLight
+                       ? Color.FromArgb(10, 0, 0, 0)
+                       : Color.FromArgb(16, 255, 255, 255)))
             {
                 graphics.FillPath(fill, path);
 
-                using var border = new Pen(Color.FromArgb(26, 255, 255, 255), MathF.Max(1f, _scale));
+                using var border = new Pen(
+                    _theme.IsLight
+                        ? Color.FromArgb(24, 0, 0, 0)
+                        : Color.FromArgb(26, 255, 255, 255),
+                    MathF.Max(1f, _scale));
                 graphics.DrawPath(border, path);
             }
 
-            using var brush = new SolidBrush(Color.FromArgb(158, 168, 186));
+            using var brush = new SolidBrush(_theme.TextMuted);
             using var format = new StringFormat
             {
                 Alignment = StringAlignment.Center,
@@ -424,7 +469,7 @@ namespace nyxWM
 
         private void DrawEmptyState(Graphics graphics)
         {
-            using var brush = new SolidBrush(Color.FromArgb(120, 130, 146));
+            using var brush = new SolidBrush(_theme.TextMuted);
             using var format = new StringFormat
             {
                 Alignment = StringAlignment.Center,
@@ -454,7 +499,9 @@ namespace nyxWM
                 return;
 
             using (GraphicsPath trackPath = CreateRoundedPath(track, width / 2f))
-            using (var trackBrush = new SolidBrush(Color.FromArgb(22, 255, 255, 255)))
+            using (var trackBrush = new SolidBrush(_theme.IsLight
+                       ? Color.FromArgb(16, 0, 0, 0)
+                       : Color.FromArgb(22, 255, 255, 255)))
             {
                 graphics.FillPath(trackBrush, trackPath);
             }
@@ -512,6 +559,10 @@ namespace nyxWM
 
             _selectedIndex = index;
             EnsureSelectionVisible();
+
+            if (!_smooth)
+                SnapHighlight();
+
             Invalidate();
         }
 

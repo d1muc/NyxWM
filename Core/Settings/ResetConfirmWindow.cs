@@ -8,8 +8,8 @@ using WinFormsTimer = System.Windows.Forms.Timer;
 namespace nyxWM
 {
     /// <summary>
-    /// Small confirmation dialog for the Reset action. Yes/No only; the reset
-    /// itself is not wired to config yet, so both buttons just close the dialog.
+    /// Small confirmation dialog for the Reset action. Yes applies the supplied
+    /// reset callback; No just closes the dialog.
     /// </summary>
     internal sealed class ResetConfirmWindow : Form
     {
@@ -29,6 +29,10 @@ namespace nyxWM
 
         private readonly NotificationTheme _theme;
         private readonly float _scale;
+        private readonly Action? _onConfirm;
+        private readonly bool _animations;
+        private readonly float _windowOpacity;
+        private readonly float _cornerRadius;
         private readonly Font _titleFont;
         private readonly Font _bodyFont;
         private readonly Font _buttonFont;
@@ -41,10 +45,16 @@ namespace nyxWM
         private float _closeElapsedMs;
         private bool _closing;
 
-        private ResetConfirmWindow(NotificationTheme theme, float scale)
+        private ResetConfirmWindow(NotificationTheme theme, float scale, Action? onConfirm)
         {
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
             _scale = Math.Clamp(scale, 0.75f, 3f);
+            _onConfirm = onConfirm;
+            _animations = VisualPreferences.SmoothAnimations;
+            _windowOpacity = VisualPreferences.WindowOpacity;
+            _cornerRadius = VisualPreferences.CornerRadius(CornerRadiusDip);
+
+            SettingsPalette.Apply(_theme);
 
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
@@ -66,13 +76,13 @@ namespace nyxWM
             _targetLocation = ResolveCenterLocation(width, height);
             Location = _targetLocation;
 
-            _titleFont = new Font("Segoe UI", 13f, FontStyle.Bold, GraphicsUnit.Point);
-            _bodyFont = new Font("Segoe UI", 9.5f, FontStyle.Regular, GraphicsUnit.Point);
-            _buttonFont = new Font("Segoe UI", 9.75f, FontStyle.Bold, GraphicsUnit.Point);
+            _titleFont = VisualPreferences.CreateUiFont("Segoe UI", 13f, FontStyle.Bold);
+            _bodyFont = VisualPreferences.CreateUiFont("Segoe UI", 9.5f, FontStyle.Regular);
+            _buttonFont = VisualPreferences.CreateUiFont("Segoe UI", 9.75f, FontStyle.Bold);
 
             BuildContent(width, height);
 
-            Opacity = 0.0;
+            Opacity = _animations ? 0.0 : _windowOpacity;
             ApplyRoundedRegion();
 
             _timer = new WinFormsTimer { Interval = 15 };
@@ -95,6 +105,10 @@ namespace nyxWM
 
             _clock.Restart();
             _lastTickMs = 0.0;
+
+            if (!_animations)
+                _elapsedMs = EntryDurationMs;
+
             _timer.Start();
             Activate();
         }
@@ -118,7 +132,7 @@ namespace nyxWM
             if (cardRect.Width <= 0f || cardRect.Height <= 0f)
                 return;
 
-            using (GraphicsPath cardPath = CreateRoundedPath(cardRect, CornerRadiusDip * _scale))
+            using (GraphicsPath cardPath = CreateRoundedPath(cardRect, _cornerRadius * _scale))
             using (var fill = new LinearGradientBrush(
                        cardRect,
                        _theme.BackgroundTop,
@@ -196,7 +210,19 @@ namespace nyxWM
             };
 
             noButton.Click += (_, _) => BeginClose();
-            yesButton.Click += (_, _) => BeginClose();
+            yesButton.Click += (_, _) =>
+            {
+                try
+                {
+                    _onConfirm?.Invoke();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"ResetConfirmWindow: reset failed: {ex.Message}");
+                }
+
+                BeginClose();
+            };
 
             Controls.Add(title);
             Controls.Add(message);
@@ -226,10 +252,16 @@ namespace nyxWM
             }
 
             float easedClose = EaseOutCubic(closeProgress);
-            Opacity = Math.Clamp(easedEntry * (1f - easedClose), 0.0, 1.0);
+            float fade = _animations
+                ? easedEntry * (1f - easedClose)
+                : 1f - easedClose;
 
-            float slide = (1f - easedEntry) * EntrySlideDip * _scale
-                          + easedClose * ExitSlideDip * _scale;
+            Opacity = Math.Clamp(fade * _windowOpacity, 0.0, 1.0);
+
+            float slide = _animations
+                ? (1f - easedEntry) * EntrySlideDip * _scale
+                  + easedClose * ExitSlideDip * _scale
+                : 0f;
 
             var location = new Point(
                 _targetLocation.X,
@@ -252,6 +284,13 @@ namespace nyxWM
             if (_closing)
                 return;
 
+            if (!_animations)
+            {
+                _timer.Stop();
+                Close();
+                return;
+            }
+
             _closing = true;
             _closeElapsedMs = 0f;
         }
@@ -263,7 +302,7 @@ namespace nyxWM
 
             using GraphicsPath path = CreateRoundedPath(
                 new RectangleF(0f, 0f, Width, Height),
-                CornerRadiusDip * _scale);
+                _cornerRadius * _scale);
 
             Region? previous = Region;
             Region = new Region(path);
@@ -327,7 +366,7 @@ namespace nyxWM
             base.Dispose(disposing);
         }
 
-        internal static void Open()
+        internal static void Open(Action? onConfirm = null)
         {
             if (_current is { IsDisposed: false })
             {
@@ -339,8 +378,10 @@ namespace nyxWM
 
             try
             {
-                NotificationTheme theme = NotificationThemeResolver.Resolve(ConfigManager.GetLiveTheme());
-                var window = new ResetConfirmWindow(theme, GetDpiScale());
+                NotificationTheme theme = NotificationThemeResolver.Resolve(
+                    ConfigManager.GetLiveTheme(),
+                    ConfigManager.Current.ThemeMode);
+                var window = new ResetConfirmWindow(theme, GetDpiScale(), onConfirm);
 
                 _current = window;
                 window.FormClosed += (_, _) =>
@@ -362,12 +403,12 @@ namespace nyxWM
             try
             {
                 using Graphics graphics = Graphics.FromHwnd(IntPtr.Zero);
-                return Math.Clamp(graphics.DpiX / 96f, 0.75f, 3f);
+                return Math.Clamp(graphics.DpiX / 96f, 0.75f, 3f) * VisualPreferences.UiScale;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"ResetConfirmWindow: DPI probe failed: {ex.Message}");
-                return 1f;
+                return VisualPreferences.UiScale;
             }
         }
     }

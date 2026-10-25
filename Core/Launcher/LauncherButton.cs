@@ -27,6 +27,9 @@ namespace nyxWM
         private readonly LauncherIcon _icon;
         private readonly NotificationTheme _theme;
         private readonly Action _onActivated;
+        private readonly bool _animations;
+        private readonly float _windowOpacity;
+        private readonly float _cornerRatio;
 
         private float _elapsedMs;
         private readonly float _entryDelayMs;
@@ -51,6 +54,9 @@ namespace nyxWM
             _entryDelayMs = MathF.Max(0f, entryDelayMs);
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
             _onActivated = onActivated ?? throw new ArgumentNullException(nameof(onActivated));
+            _animations = VisualPreferences.SmoothAnimations;
+            _windowOpacity = VisualPreferences.WindowOpacity;
+            _cornerRatio = VisualPreferences.CornerRadiusRatio(RadiusRatio);
 
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
@@ -67,7 +73,7 @@ namespace nyxWM
 
             int initialSize = Math.Max(1, (int)MathF.Round(BaseSize * _scale * EntryStartScale));
             Size = new Size(initialSize, initialSize);
-            Opacity = 0.0;
+            Opacity = _animations ? 0.0 : _windowOpacity;
 
             ApplyRoundedRegion();
         }
@@ -98,18 +104,31 @@ namespace nyxWM
         {
             _elapsedMs += dtMs;
 
-            float entryProgress = Math.Clamp((_elapsedMs - _entryDelayMs) / EntryDurationMs, 0f, 1f);
+            float entryProgress = _animations
+                ? Math.Clamp((_elapsedMs - _entryDelayMs) / EntryDurationMs, 0f, 1f)
+                : 1f;
             float easedEntry = EaseOutCubic(entryProgress);
 
             float hoverTarget = _hovered ? 1f : 0f;
-            float hoverFactor = 1f - MathF.Exp(-HoverSmoothingPerSecond * dtMs / 1000f);
-            _hoverAmount += (hoverTarget - _hoverAmount) * hoverFactor;
+
+            if (_animations)
+            {
+                float hoverFactor = 1f - MathF.Exp(-HoverSmoothingPerSecond * dtMs / 1000f);
+                _hoverAmount += (hoverTarget - _hoverAmount) * hoverFactor;
+            }
+            else
+            {
+                _hoverAmount = hoverTarget;
+            }
 
             float closeProgress = 0f;
             if (_closing)
             {
                 _closeElapsedMs += dtMs;
-                closeProgress = Math.Clamp((_closeElapsedMs - _exitDelayMs) / ExitDurationMs, 0f, 1f);
+                closeProgress = Math.Clamp(
+                    (_closeElapsedMs - _exitDelayMs) / ExitDurationMs,
+                    0f,
+                    1f);
             }
 
             float easedClose = EaseOutCubic(closeProgress);
@@ -117,9 +136,13 @@ namespace nyxWM
                 ? easedEntry * (1f - easedClose)
                 : easedEntry;
 
-            Opacity = Math.Clamp(opacity, 0.0, 1.0);
+            Opacity = Math.Clamp(opacity * _windowOpacity, 0.0, 1.0);
 
-            _visualScale = (EntryStartScale + (1f - EntryStartScale) * easedEntry)
+            float entryScale = _animations
+                ? EntryStartScale + (1f - EntryStartScale) * easedEntry
+                : 1f;
+
+            _visualScale = entryScale
                            * (1f - closeProgress)
                            * (1f + HoverScale * _hoverAmount);
 
@@ -135,6 +158,12 @@ namespace nyxWM
             _closing = true;
             _closeElapsedMs = 0f;
             _exitDelayMs = MathF.Max(0f, delayMs);
+
+            if (!_animations)
+            {
+                _closeElapsedMs = _exitDelayMs + ExitDurationMs;
+                Opacity = 0.0;
+            }
         }
 
         protected override void OnSizeChanged(EventArgs e)
@@ -184,7 +213,7 @@ namespace nyxWM
             if (cardRect.Width <= 0f || cardRect.Height <= 0f)
                 return;
 
-            float radius = Width * RadiusRatio;
+            float radius = Width * _cornerRatio;
 
             using (GraphicsPath cardPath = CreateRoundedPath(cardRect, radius))
             using (var fill = new LinearGradientBrush(
@@ -224,7 +253,9 @@ namespace nyxWM
             float centerY = Height / 2f;
             float penWidth = MathF.Max(1f, 2.1f * _scale * MathF.Max(0.05f, _visualScale));
 
-            using var pen = new Pen(Color.FromArgb(238, 241, 248), penWidth)
+            Color iconColor = _theme.TextPrimary;
+
+            using var pen = new Pen(iconColor, penWidth)
             {
                 StartCap = LineCap.Round,
                 EndCap = LineCap.Round,
@@ -234,7 +265,7 @@ namespace nyxWM
             switch (_icon)
             {
                 case LauncherIcon.Sliders:
-                    DrawSliders(graphics, pen, centerX, centerY, radius);
+                    DrawSliders(graphics, pen, centerX, centerY, radius, iconColor);
                     break;
                 case LauncherIcon.Search:
                     DrawSearch(graphics, pen, centerX, centerY, radius);
@@ -245,19 +276,25 @@ namespace nyxWM
             }
         }
 
-        private static void DrawSliders(Graphics graphics, Pen pen, float cx, float cy, float radius)
+        private static void DrawSliders(
+            Graphics graphics,
+            Pen pen,
+            float cx,
+            float cy,
+            float radius,
+            Color iconColor)
         {
             float left = cx - radius * 0.92f;
             float right = cx + radius * 0.92f;
             float rowStep = radius * 0.46f;
             float knobRadius = radius * 0.16f;
 
-            using var trackPen = new Pen(Color.FromArgb(150, 238, 241, 248), pen.Width * 0.86f)
+            using var trackPen = new Pen(Color.FromArgb(150, iconColor), pen.Width * 0.86f)
             {
                 StartCap = LineCap.Round,
                 EndCap = LineCap.Round
             };
-            using var knobBrush = new SolidBrush(Color.FromArgb(238, 241, 248));
+            using var knobBrush = new SolidBrush(iconColor);
 
             float[] knobOffsets = { 0.18f, 0.62f, -0.42f };
 
@@ -345,7 +382,7 @@ namespace nyxWM
 
             using GraphicsPath path = CreateRoundedPath(
                 new RectangleF(0f, 0f, Width, Height),
-                Width * RadiusRatio);
+                Width * _cornerRatio);
 
             Region? previous = Region;
             Region = new Region(path);
