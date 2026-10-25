@@ -138,6 +138,36 @@ namespace nyxWM
     // How long a notification stays visible, in milliseconds.
     // Type: integer 800-20000. Default: 3200.
     "DurationMs": 3200
+  },
+
+  // Terminal
+  // Appearance and behaviour of the terminal windows.
+  "Terminal": {
+    // Monospace font family.
+    // Options: Cascadia Code (default), JetBrains Mono, Fira Code, Consolas.
+    // A family that is not installed falls back to the next available one.
+    "FontFamily": "Cascadia Code",
+    // Console font size in points. Type: number 11-18. Default: 11.
+    "FontSize": 11,
+    // Cursor shape: "Block" (default), "Line" or "Underline".
+    "CursorStyle": "Block",
+    // Blink the cursor while the terminal has focus.
+    "CursorBlink": true,
+    // Palette preset. "Theme" tints the standard colours towards the accent
+    // chosen in the Visuals page; "Custom Accent" tints them more strongly.
+    // Options: Theme (default), Custom Accent, Dracula, Matrix Green,
+    //          Cyberpunk Neon, Monokai, Nord.
+    "ColorScheme": "Theme",
+    // Terminal window opacity from 0.4 (very transparent) to 1.0 (opaque).
+    // Independent from the global WindowOpacity. Default: 0.98.
+    "Opacity": 0.98,
+    // Shell started by the terminal.
+    // Options: zsh (default), bash (both from MSYS2), powershell, cmd.
+    "Shell": "zsh",
+    // Scroll to the newest output when the shell writes.
+    "AutoScroll": true,
+    // Copy a mouse selection to the clipboard on release.
+    "CopyOnSelect": false
   }
 }
 """;
@@ -151,6 +181,7 @@ namespace nyxWM
         {
             HotkeySettings hotkeys = settings.Hotkeys ?? new HotkeySettings();
             NotificationSettings notifications = settings.Notifications ?? new NotificationSettings();
+            TerminalSettings terminal = settings.Terminal ?? new TerminalSettings();
 
             static string Str(string? value) => JsonSerializer.Serialize(value ?? string.Empty);
             static string Num(float value) => value.ToString(CultureInfo.InvariantCulture);
@@ -284,6 +315,36 @@ namespace nyxWM
             sb.AppendLine("    // How long a notification stays visible, in milliseconds.");
             sb.AppendLine("    // Type: integer 800-20000. Default: 3200.");
             sb.AppendLine($"    \"DurationMs\": {notifications.DurationMs}");
+            sb.AppendLine("  },");
+            sb.AppendLine();
+            sb.AppendLine("  // Terminal ");
+            sb.AppendLine("  // Appearance and behaviour of the terminal windows.");
+            sb.AppendLine("  \"Terminal\": {");
+            sb.AppendLine("    // Monospace font family.");
+            sb.AppendLine("    // Options: Cascadia Code (default), JetBrains Mono, Fira Code, Consolas.");
+            sb.AppendLine("    // A family that is not installed falls back to the next available one.");
+            sb.AppendLine($"    \"FontFamily\": {Str(terminal.FontFamily)},");
+            sb.AppendLine("    // Console font size in points. Type: number 11-18. Default: 11.");
+            sb.AppendLine($"    \"FontSize\": {Num(terminal.FontSize)},");
+            sb.AppendLine("    // Cursor shape: \"Block\" (default), \"Line\" or \"Underline\".");
+            sb.AppendLine($"    \"CursorStyle\": {Str(terminal.CursorStyle)},");
+            sb.AppendLine("    // Blink the cursor while the terminal has focus.");
+            sb.AppendLine($"    \"CursorBlink\": {Bool(terminal.CursorBlink)},");
+            sb.AppendLine("    // Palette preset. \"Theme\" tints the standard colours towards the accent");
+            sb.AppendLine("    // chosen in the Visuals page; \"Custom Accent\" tints them more strongly.");
+            sb.AppendLine("    // Options: Theme (default), Custom Accent, Dracula, Matrix Green,");
+            sb.AppendLine("    //          Cyberpunk Neon, Monokai, Nord.");
+            sb.AppendLine($"    \"ColorScheme\": {Str(terminal.ColorScheme)},");
+            sb.AppendLine("    // Terminal window opacity from 0.4 (very transparent) to 1.0 (opaque).");
+            sb.AppendLine("    // Independent from the global WindowOpacity. Default: 0.98.");
+            sb.AppendLine($"    \"Opacity\": {Num(terminal.Opacity)},");
+            sb.AppendLine("    // Shell started by the terminal.");
+            sb.AppendLine("    // Options: zsh (default), bash (both from MSYS2), powershell, cmd.");
+            sb.AppendLine($"    \"Shell\": {Str(terminal.Shell)},");
+            sb.AppendLine("    // Scroll to the newest output when the shell writes.");
+            sb.AppendLine($"    \"AutoScroll\": {Bool(terminal.AutoScroll)},");
+            sb.AppendLine("    // Copy a mouse selection to the clipboard on release.");
+            sb.AppendLine($"    \"CopyOnSelect\": {Bool(terminal.CopyOnSelect)}");
             sb.AppendLine("  }");
             sb.Append("}");
 

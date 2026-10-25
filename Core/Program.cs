@@ -186,6 +186,7 @@ namespace nyxWM
                     ConfigManager.Current.MainMod);
                 windowManager.ApplyLiveConfig();
                 TerminalWindowService.ApplyThemeToAll();
+                TerminalWindowService.ApplySettingsToAll();
             };
 
             // Register hotkeys from configuration

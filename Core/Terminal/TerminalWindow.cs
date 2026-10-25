@@ -33,8 +33,8 @@ namespace nyxWM
         private const int HTBOTTOMRIGHT = 17;
         private const int VK_LBUTTON = 0x01;
 
-        private const float BaseWidthDip = 980f;
-        private const float BaseHeightDip = 620f;
+        private const float BaseWidthDip = 1080f;
+        private const float BaseHeightDip = 720f;
         private const float CornerRadiusDip = 18f;
         private const float PaddingDip = 16f;
         private const float HeaderTopDip = 8f;
@@ -55,13 +55,26 @@ namespace nyxWM
         private float _themeProgress = 1f;
         private readonly float _scale;
         private readonly Font _titleFont;
-        private readonly Font _monoFont;
+        private Font _monoFont;
         private readonly Action<IntPtr>? _requestCenter;
-        private readonly float _windowOpacity;
+        private float _windowOpacity;
         private readonly bool _animations;
         private readonly float _cornerRadiusDip;
         private readonly WinFormsTimer _timer;
+        private readonly WinFormsTimer _blinkTimer;
         private readonly Stopwatch _clock = Stopwatch.StartNew();
+
+        private TerminalColorScheme _scheme;
+        private TerminalColorScheme _schemeFrom;
+        private string _schemeName;
+        private string _fontFamily;
+        private float _fontSize;
+        private string _cursorStyle;
+        private bool _cursorBlink;
+        private bool _autoScroll;
+        private bool _copyOnSelect;
+        private string _shellName;
+        private bool _cursorBlinkOn = true;
 
         private RectangleF _consoleRect;
         private RectangleF _closeRect;
@@ -77,6 +90,9 @@ namespace nyxWM
         private Color _mutedColor;
         private Color _fieldBorderColor;
         private Color _consoleFill;
+        private Color _consoleForeground;
+        private Color _cursorColor;
+        private readonly Color[] _ansiPalette = new Color[16];
 
         private double _lastTickMs;
         private float _elapsedMs;
@@ -105,11 +121,25 @@ namespace nyxWM
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
             _scale = Math.Clamp(scale, 0.75f, 3f);
             _requestCenter = requestCenter;
-            _windowOpacity = VisualPreferences.WindowOpacity;
+
+            TerminalSettings terminal = TerminalPreferences.Current;
+            _fontFamily = TerminalPreferences.NormalizeFontFamily(terminal.FontFamily);
+            _fontSize = TerminalPreferences.NormalizeFontSize(terminal.FontSize);
+            _cursorStyle = TerminalPreferences.NormalizeCursorStyle(terminal.CursorStyle);
+            _cursorBlink = terminal.CursorBlink;
+            _autoScroll = terminal.AutoScroll;
+            _copyOnSelect = terminal.CopyOnSelect;
+            _shellName = TerminalPreferences.NormalizeShell(terminal.Shell);
+            _schemeName = TerminalPreferences.NormalizeColorScheme(terminal.ColorScheme);
+
+            _windowOpacity = TerminalPreferences.NormalizeOpacity(terminal.Opacity);
             _animations = VisualPreferences.SmoothAnimations;
             _cornerRadiusDip = VisualPreferences.CornerRadius(CornerRadiusDip);
             _titleFont = VisualPreferences.CreateUiFont("Segoe UI", 9.5f, FontStyle.Bold);
-            _monoFont = CreateMonoFont(11f);
+            _monoFont = TerminalPreferences.CreateConsoleFont(_fontFamily, _fontSize);
+
+            _scheme = TerminalColorScheme.Create(_schemeName, _theme);
+            _schemeFrom = _scheme;
 
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
@@ -150,6 +180,10 @@ namespace nyxWM
 
             _timer = new WinFormsTimer { Interval = 15 };
             _timer.Tick += OnTick;
+
+            _blinkTimer = new WinFormsTimer { Interval = 530 };
+            _blinkTimer.Tick += OnBlinkTick;
+            UpdateBlinkTimer();
 
             NotificationService.LayoutSwitched += OnLayoutSwitched;
         }
@@ -310,6 +344,137 @@ namespace nyxWM
                 _timer.Stop();
         }
 
+        private void OnBlinkTick(object? sender, EventArgs e)
+        {
+            if (IsDisposed)
+                return;
+
+            if (!_cursorBlink || !ContainsFocus)
+            {
+                if (!_cursorBlinkOn)
+                {
+                    _cursorBlinkOn = true;
+                    Invalidate();
+                }
+
+                return;
+            }
+
+            _cursorBlinkOn = !_cursorBlinkOn;
+            Invalidate();
+        }
+
+        private void UpdateBlinkTimer()
+        {
+            _cursorBlinkOn = true;
+            _blinkTimer.Stop();
+
+            if (_cursorBlink)
+                _blinkTimer.Start();
+        }
+
+        private void ResetCursorBlink()
+        {
+            if (!_cursorBlink || _cursorBlinkOn)
+                return;
+
+            _cursorBlinkOn = true;
+            Invalidate();
+        }
+
+        /// <summary>
+        /// Re-applies the Terminal settings save to this open window: font size
+        /// and family, cursor, palette, opacity and behaviour switch live. A
+        /// shell change restarts only the session, not the window.
+        /// </summary>
+        internal void ApplySettings(bool animate)
+        {
+            if (IsDisposed)
+                return;
+
+            TerminalSettings settings = TerminalPreferences.Current;
+
+            string fontFamily = TerminalPreferences.NormalizeFontFamily(settings.FontFamily);
+            float fontSize = TerminalPreferences.NormalizeFontSize(settings.FontSize);
+            bool fontChanged = !string.Equals(fontFamily, _fontFamily, StringComparison.Ordinal)
+                               || Math.Abs(fontSize - _fontSize) > 0.01f;
+
+            string shell = TerminalPreferences.NormalizeShell(settings.Shell);
+            bool shellChanged = !string.Equals(shell, _shellName, StringComparison.Ordinal);
+
+            _cursorStyle = TerminalPreferences.NormalizeCursorStyle(settings.CursorStyle);
+            _cursorBlink = settings.CursorBlink;
+            _autoScroll = settings.AutoScroll;
+            _copyOnSelect = settings.CopyOnSelect;
+            _windowOpacity = TerminalPreferences.NormalizeOpacity(settings.Opacity);
+
+            if (!_animations || _elapsedMs >= EntryDurationMs)
+                Opacity = _windowOpacity;
+
+            string schemeName = TerminalPreferences.NormalizeColorScheme(settings.ColorScheme);
+            if (!string.Equals(schemeName, _schemeName, StringComparison.Ordinal))
+                ApplyScheme(schemeName, animate);
+
+            if (fontChanged)
+            {
+                _fontFamily = fontFamily;
+                _fontSize = fontSize;
+                RebuildConsoleFont();
+            }
+
+            if (shellChanged)
+            {
+                _shellName = shell;
+                RestartSession();
+            }
+
+            UpdateBlinkTimer();
+            Invalidate();
+        }
+
+        private void ApplyScheme(string schemeName, bool animate)
+        {
+            _schemeFrom = _scheme;
+            _schemeName = schemeName;
+            _scheme = TerminalColorScheme.Create(schemeName, _theme);
+
+            if (!animate || !_animations)
+            {
+                _themeProgress = 1f;
+                RefreshPalette();
+                return;
+            }
+
+            _themeProgress = 0f;
+            RefreshPalette();
+            _timer.Start();
+        }
+
+        private void RebuildConsoleFont()
+        {
+            Font previous = _monoFont;
+            _monoFont = TerminalPreferences.CreateConsoleFont(_fontFamily, _fontSize);
+            previous.Dispose();
+
+            UpdateConsoleMetrics();
+            Invalidate();
+        }
+
+        private void RestartSession()
+        {
+            TerminalSession? session = _session;
+            _session = null;
+            _screen = null;
+            session?.Dispose();
+
+            _sessionError = null;
+            _sessionEnded = false;
+            _hasSelection = false;
+            _selecting = false;
+
+            StartSession();
+        }
+
         /// <summary>
         /// Switches this window to a new resolved theme, optionally smoothing the
         /// colour change so a settings save or config edit fades the already open
@@ -325,6 +490,8 @@ namespace nyxWM
 
             _themeFrom = _theme;
             _theme = theme;
+            _schemeFrom = _scheme;
+            _scheme = TerminalColorScheme.Create(_schemeName, theme);
 
             if (!animate || !_animations)
             {
@@ -347,16 +514,20 @@ namespace nyxWM
             _accentColor = Blend(_themeFrom.Accent, _theme.Accent, t);
             _mutedColor = Blend(_themeFrom.TextMuted, _theme.TextMuted, t);
             _fieldBorderColor = Blend(_themeFrom.FieldBorder, _theme.FieldBorder, t);
-            _consoleFill = Blend(ConsoleFillFor(_themeFrom), ConsoleFillFor(_theme), t);
+
+            _consoleFill = Blend(_schemeFrom.Background, _scheme.Background, t);
+            _consoleForeground = Blend(_schemeFrom.Foreground, _scheme.Foreground, t);
+            _cursorColor = Blend(_schemeFrom.Cursor, _scheme.Cursor, t);
+
+            for (int index = 0; index < _ansiPalette.Length; index++)
+            {
+                _ansiPalette[index] = Blend(
+                    _schemeFrom.PaletteColor(index),
+                    _scheme.PaletteColor(index),
+                    t);
+            }
 
             Invalidate();
-        }
-
-        private static Color ConsoleFillFor(NotificationTheme theme)
-        {
-            return theme.IsLight
-                ? Color.FromArgb(150, theme.FieldBackground)
-                : Color.FromArgb(170, theme.FieldBackground);
         }
 
         private static Color Blend(Color from, Color to, float t)
@@ -494,6 +665,9 @@ namespace nyxWM
                     _hasSelection = _selectionStart != _selectionEnd;
                 }
 
+                if (_copyOnSelect && _hasSelection)
+                    CopySelection();
+
                 Invalidate();
             }
         }
@@ -532,6 +706,8 @@ namespace nyxWM
         {
             base.OnKeyPress(e);
 
+            ResetCursorBlink();
+
             if (char.IsControl(e.KeyChar))
                 return;
 
@@ -549,6 +725,8 @@ namespace nyxWM
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);
+
+            ResetCursorBlink();
 
             // Track real typing, not just activation: a layout switch must only
             // reclaim focus for the window the user was actually typing into.
@@ -733,7 +911,7 @@ namespace nyxWM
 
         private void DrawScreen(Graphics graphics, AnsiScreenBuffer screen, float originX, float originY)
         {
-            Color defaultForeground = _theme.TextPrimary;
+            Color defaultForeground = _consoleForeground;
             float bottom = _consoleRect.Bottom - ConsolePaddingDip * _scale;
 
             using var format = new StringFormat(StringFormat.GenericTypographic)
@@ -836,14 +1014,41 @@ namespace nyxWM
             if (!screen.CursorVisible || !ContainsFocus || screen.ScrollOffset > 0)
                 return;
 
+            if (_cursorBlink && !_cursorBlinkOn)
+                return;
+
             var rect = new RectangleF(
                 originX + screen.CursorColumn * _cellWidth,
                 originY + screen.CursorRow * _cellHeight,
                 MathF.Max(1f, _cellWidth),
                 MathF.Max(1f, _cellHeight));
 
-            using var brush = new SolidBrush(Color.FromArgb(96, _accentColor));
-            graphics.FillRectangle(brush, rect);
+            switch (_cursorStyle)
+            {
+                case TerminalPreferences.CursorLine:
+                {
+                    float width = MathF.Max(1f, 2f * _scale);
+                    using var pen = new Pen(_cursorColor, width);
+                    float x = rect.Left + width * 0.5f;
+                    graphics.DrawLine(pen, x, rect.Top, x, rect.Bottom);
+                    break;
+                }
+
+                case TerminalPreferences.CursorUnderline:
+                {
+                    float height = MathF.Max(1f, 2f * _scale);
+                    using var brush = new SolidBrush(_cursorColor);
+                    graphics.FillRectangle(brush, rect.Left, rect.Bottom - height, rect.Width, height);
+                    break;
+                }
+
+                default:
+                {
+                    using var brush = new SolidBrush(Color.FromArgb(96, _cursorColor));
+                    graphics.FillRectangle(brush, rect);
+                    break;
+                }
+            }
         }
 
         private void DrawSelection(Graphics graphics, float originX, float originY)
@@ -977,7 +1182,7 @@ namespace nyxWM
                    && left.Attributes == right.Attributes;
         }
 
-        private static Color ResolveColor(AnsiColor color, Color fallback)
+        private Color ResolveColor(AnsiColor color, Color fallback)
         {
             return color.Kind switch
             {
@@ -987,48 +1192,14 @@ namespace nyxWM
             };
         }
 
-        private static Color IndexedColor(byte index)
+        private Color IndexedColor(byte index)
         {
             if (index < 16)
-                return XtermPalette[index];
+                return _ansiPalette[index];
 
-            if (index < 232)
-            {
-                int cube = index - 16;
-                return Color.FromArgb(
-                    CubeLevel(cube / 36),
-                    CubeLevel(cube % 36 / 6),
-                    CubeLevel(cube % 6));
-            }
-
-            int gray = 8 + (index - 232) * 10;
-            return Color.FromArgb(gray, gray, gray);
+            return TerminalColorScheme.StandardColor(index);
         }
 
-        private static int CubeLevel(int value)
-        {
-            return value == 0 ? 0 : 55 + value * 40;
-        }
-
-        private static readonly Color[] XtermPalette =
-        {
-            Color.FromArgb(0, 0, 0),
-            Color.FromArgb(128, 0, 0),
-            Color.FromArgb(0, 128, 0),
-            Color.FromArgb(128, 128, 0),
-            Color.FromArgb(0, 0, 128),
-            Color.FromArgb(128, 0, 128),
-            Color.FromArgb(0, 128, 128),
-            Color.FromArgb(192, 192, 192),
-            Color.FromArgb(128, 128, 128),
-            Color.FromArgb(255, 0, 0),
-            Color.FromArgb(0, 255, 0),
-            Color.FromArgb(255, 255, 0),
-            Color.FromArgb(0, 0, 255),
-            Color.FromArgb(255, 0, 255),
-            Color.FromArgb(0, 255, 255),
-            Color.FromArgb(255, 255, 255)
-        };
 
         private void DrawHeader(Graphics graphics)
         {
@@ -1148,11 +1319,15 @@ namespace nyxWM
 
             try
             {
+                TerminalShellLaunch launch = TerminalPreferences.ResolveShell(_shellName);
                 var screen = new AnsiScreenBuffer(_consoleColumns, _consoleRows);
                 var session = new TerminalSession(new TerminalSessionOptions
                 {
                     Columns = _consoleColumns,
-                    Rows = _consoleRows
+                    Rows = _consoleRows,
+                    ShellPath = launch.Path,
+                    ShellArguments = launch.Arguments,
+                    UseMsysEnvironment = launch.UseMsysEnvironment
                 });
 
                 screen.ResponseRequested += response => session.WriteInput(response);
@@ -1222,20 +1397,37 @@ namespace nyxWM
 
         private void OnSessionOutput(object? sender, TerminalOutputEventArgs e)
         {
-            if (e.Text.Length == 0)
+            if (e.Text.Length == 0 || !ReferenceEquals(sender, _session))
                 return;
 
             PostToUi(() =>
             {
+                if (!ReferenceEquals(sender, _session))
+                    return;
+
+                // Auto-scroll follows new output only while the view is already
+                // at the newest line; a user who scrolled up stays where they are.
+                bool follow = _autoScroll && (_screen is null || _screen.ScrollOffset == 0);
+
                 _screen?.Feed(e.Text);
+
+                if (follow)
+                    _screen?.ScrollToBottom();
+
                 Invalidate();
             });
         }
 
         private void OnSessionExited(object? sender, EventArgs e)
         {
+            if (!ReferenceEquals(sender, _session))
+                return;
+
             PostToUi(() =>
             {
+                if (!ReferenceEquals(sender, _session))
+                    return;
+
                 _sessionEnded = true;
                 Invalidate();
             });
@@ -1243,8 +1435,14 @@ namespace nyxWM
 
         private void OnSessionFaulted(object? sender, TerminalErrorEventArgs e)
         {
+            if (!ReferenceEquals(sender, _session))
+                return;
+
             PostToUi(() =>
             {
+                if (!ReferenceEquals(sender, _session))
+                    return;
+
                 _sessionError = e.Error.Message;
                 Invalidate();
             });
@@ -1307,25 +1505,6 @@ namespace nyxWM
             previous?.Dispose();
         }
 
-        private static Font CreateMonoFont(float sizePoints)
-        {
-            string[] families = { "Cascadia Code", "Cascadia Mono", "JetBrains Mono", "Fira Code", "Consolas" };
-
-            foreach (string family in families)
-            {
-                try
-                {
-                    return new Font(family, sizePoints * VisualPreferences.UiScale, FontStyle.Regular, GraphicsUnit.Point);
-                }
-                catch (ArgumentException)
-                {
-                    // Family is not installed; try the next candidate.
-                }
-            }
-
-            return new Font(FontFamily.GenericMonospace, sizePoints * VisualPreferences.UiScale, FontStyle.Regular, GraphicsUnit.Point);
-        }
-
         protected override void Dispose(bool disposing)
         {
             if (disposing)
@@ -1334,6 +1513,9 @@ namespace nyxWM
 
                 _timer.Stop();
                 _timer.Dispose();
+
+                _blinkTimer.Stop();
+                _blinkTimer.Dispose();
 
                 _session?.Dispose();
                 _session = null;

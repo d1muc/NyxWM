@@ -35,6 +35,20 @@ namespace nyxWM
         /// <summary>Explicit shell path; null auto-resolves zsh, then bash.</summary>
         public string? ShellPath { get; init; }
 
+        /// <summary>
+        /// Command line arguments passed to <see cref="ShellPath"/>. Null uses
+        /// the interactive MSYS2 form <c>-l -i</c>; an empty string starts the
+        /// shell with no arguments.
+        /// </summary>
+        public string? ShellArguments { get; init; }
+
+        /// <summary>
+        /// Adds the MSYS2 PATH, MSYSTEM and locale variables to the child
+        /// environment. False for native Windows shells such as cmd and
+        /// PowerShell.
+        /// </summary>
+        public bool UseMsysEnvironment { get; init; } = true;
+
         /// <summary>MSYS2 subsystem: UCRT64, CLANG64, MINGW64 or MSYS.</summary>
         public string Msystem { get; init; } = "UCRT64";
 
@@ -450,7 +464,10 @@ namespace nyxWM
                 startupInfo.StartupInfo.cb = Marshal.SizeOf<ConPtyNative.StartupInfoEx>();
                 startupInfo.lpAttributeList = attributeList;
 
-                var commandLine = new StringBuilder($"\"{shellPath}\" -l -i");
+                string arguments = _options.ShellArguments ?? "-l -i";
+                var commandLine = new StringBuilder($"\"{shellPath}\"");
+                if (!string.IsNullOrWhiteSpace(arguments))
+                    commandLine.Append(' ').Append(arguments);
                 string? workingDirectory = string.IsNullOrWhiteSpace(_options.WorkingDirectory)
                     ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
                     : _options.WorkingDirectory;
@@ -634,13 +651,22 @@ namespace nyxWM
             string usrBin = Path.Combine(root, "usr", "bin");
             string inheritedPath = variables.TryGetValue("PATH", out string? path) ? path : string.Empty;
 
-            variables["PATH"] = JoinPath(subsystemBin, usrBin, inheritedPath);
-            variables["TERM"] = "xterm-256color";
-            variables["COLORTERM"] = "truecolor";
-            variables["LANG"] = "en_US.UTF-8";
-            variables["MSYSTEM"] = msystem;
-            variables["CHERE_INVOKING"] = "1";
-            variables["MSYS2_PATH_TYPE"] = "inherit";
+            if (_options.UseMsysEnvironment)
+            {
+                variables["PATH"] = JoinPath(subsystemBin, usrBin, inheritedPath);
+                variables["TERM"] = "xterm-256color";
+                variables["COLORTERM"] = "truecolor";
+                variables["LANG"] = "en_US.UTF-8";
+                variables["MSYSTEM"] = msystem;
+                variables["CHERE_INVOKING"] = "1";
+                variables["MSYS2_PATH_TYPE"] = "inherit";
+            }
+            else
+            {
+                variables.Remove("MSYSTEM");
+                variables.Remove("MSYS2_PATH_TYPE");
+                variables.Remove("CHERE_INVOKING");
+            }
 
             foreach (KeyValuePair<string, string> pair in _options.EnvironmentOverrides)
                 variables[pair.Key] = pair.Value;

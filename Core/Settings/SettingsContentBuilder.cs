@@ -61,6 +61,16 @@ namespace nyxWM
         private SettingsComboBox? _positionCombo;
         private SettingsSlider? _durationSlider;
 
+        private SettingsComboBox? _terminalFontCombo;
+        private SettingsSlider? _terminalFontSizeSlider;
+        private SettingsSegmented? _terminalCursorSegmented;
+        private SettingsToggle? _terminalBlinkToggle;
+        private SettingsComboBox? _terminalSchemeCombo;
+        private SettingsSlider? _terminalOpacitySlider;
+        private SettingsComboBox? _terminalShellCombo;
+        private SettingsToggle? _terminalAutoScrollToggle;
+        private SettingsToggle? _terminalCopySelectToggle;
+
         internal SettingsContentBuilder(NotificationTheme theme, float scale, ConfigSettings config)
         {
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
@@ -76,7 +86,7 @@ namespace nyxWM
 
         internal SettingsContentPanel[] Build(int width, int height)
         {
-            var panels = new SettingsContentPanel[7];
+            var panels = new SettingsContentPanel[8];
 
             for (int i = 0; i < panels.Length; i++)
             {
@@ -93,6 +103,7 @@ namespace nyxWM
             BuildLaunchApps(panels[4], width);
             BuildVisuals(panels[5], width);
             BuildNotifications(panels[6], width);
+            BuildTerminal(panels[7], width);
 
             return panels;
         }
@@ -676,6 +687,177 @@ namespace nyxWM
             _durationSlider = durationSlider;
         }
 
+        private void BuildTerminal(SettingsContentPanel panel, int width)
+        {
+            float cardWidth = width - Pad * 2f;
+            float gap = 10f * _scale;
+            float innerPad = 14f * _scale;
+            float innerWidth = cardWidth - innerPad * 2f;
+            float rowHeight = 26f * _scale;
+            float row1 = 38f * _scale;
+            float row2 = 68f * _scale;
+            float row3 = 98f * _scale;
+            float row4 = 128f * _scale;
+            float controlWidth = 190f * _scale;
+            float boxWidth = 54f * _scale;
+            float sliderWidth = 140f * _scale;
+
+            TerminalSettings terminal = _config.Terminal ?? new TerminalSettings();
+            float y = 8f * _scale;
+
+            var fontCard = new SettingsCardPanel(_theme, _scale, "Font & Appearance")
+            {
+                Bounds = Rect(Pad, y, cardWidth, 160f * _scale)
+            };
+            panel.Controls.Add(fontCard);
+
+            AddLabel(fontCard, "Font family", innerPad, row1, innerWidth * 0.5f);
+            var fontFamily = new SettingsComboBox(_theme.Accent)
+            {
+                Font = _fieldFont,
+                Bounds = Rect(cardWidth - innerPad - controlWidth, row1, controlWidth, rowHeight)
+            };
+            fontFamily.ItemHeight = Math.Max(18, (int)MathF.Round(22f * _scale));
+            fontFamily.Items.AddRange(TerminalPreferences.FontFamilies);
+            fontFamily.SelectedItem = TerminalPreferences.NormalizeFontFamily(terminal.FontFamily);
+            fontCard.Controls.Add(fontFamily);
+            _terminalFontCombo = fontFamily;
+
+            AddLabel(fontCard, "Font size", innerPad, row2, innerWidth * 0.5f);
+
+            float fontSizeSliderX = cardWidth - innerPad - boxWidth - 8f * _scale - sliderWidth;
+
+            var fontSizeSlider = new SettingsSlider(_theme.Accent)
+            {
+                Minimum = TerminalPreferences.MinFontSize,
+                Maximum = TerminalPreferences.MaxFontSize,
+                Value = TerminalPreferences.NormalizeFontSize(terminal.FontSize),
+                Bounds = Rect(fontSizeSliderX, row2, sliderWidth, rowHeight)
+            };
+
+            TextBox fontSizeBox = CreateNumericBox(
+                FormatNumber((float)fontSizeSlider.Value),
+                allowDecimal: false);
+
+            fontSizeBox.Bounds = Rect(cardWidth - innerPad - boxWidth, row2, boxWidth, rowHeight);
+            fontCard.Controls.Add(fontSizeSlider);
+            fontCard.Controls.Add(fontSizeBox);
+            LinkSlider(fontSizeSlider, fontSizeBox);
+            fontSizeSlider.ValueChanged += (_, _) =>
+            {
+                double snapped = Math.Round(fontSizeSlider.Value);
+                if (Math.Abs(fontSizeSlider.Value - snapped) > 0.0001)
+                    fontSizeSlider.Value = snapped;
+            };
+            _terminalFontSizeSlider = fontSizeSlider;
+
+            AddLabel(fontCard, "Cursor style", innerPad, row3, innerWidth * 0.5f);
+            var cursorStyle = new SettingsSegmented(_theme, TerminalPreferences.CursorStyles)
+            {
+                Bounds = Rect(cardWidth - innerPad - 240f * _scale, row3, 240f * _scale, rowHeight)
+            };
+            cursorStyle.Font = _fieldFont;
+
+            string normalizedCursor = TerminalPreferences.NormalizeCursorStyle(terminal.CursorStyle);
+            cursorStyle.SelectedIndex = Math.Max(
+                0,
+                Array.IndexOf(TerminalPreferences.CursorStyles, normalizedCursor));
+
+            fontCard.Controls.Add(cursorStyle);
+            _terminalCursorSegmented = cursorStyle;
+
+            _terminalBlinkToggle = AddCardToggle(
+                fontCard,
+                "Cursor blink",
+                terminal.CursorBlink,
+                innerWidth,
+                innerPad,
+                row4,
+                rowHeight);
+
+            y += 160f * _scale + gap;
+
+            var colorCard = new SettingsCardPanel(_theme, _scale, "Terminal Colors & Theme")
+            {
+                Bounds = Rect(Pad, y, cardWidth, 108f * _scale)
+            };
+            panel.Controls.Add(colorCard);
+
+            AddLabel(colorCard, "Color scheme", innerPad, row1, innerWidth * 0.5f);
+            var scheme = new SettingsComboBox(_theme.Accent)
+            {
+                Font = _fieldFont,
+                Bounds = Rect(cardWidth - innerPad - 220f * _scale, row1, 220f * _scale, rowHeight)
+            };
+            scheme.ItemHeight = Math.Max(18, (int)MathF.Round(22f * _scale));
+            scheme.Items.AddRange(TerminalPreferences.ColorSchemes);
+            scheme.SelectedItem = TerminalPreferences.NormalizeColorScheme(terminal.ColorScheme);
+            colorCard.Controls.Add(scheme);
+            _terminalSchemeCombo = scheme;
+
+            AddLabel(colorCard, "Opacity override (%)", innerPad, row2, innerWidth * 0.5f);
+
+            float opacitySliderX = cardWidth - innerPad - boxWidth - 8f * _scale - sliderWidth;
+            double opacityPercent =
+                TerminalPreferences.NormalizeOpacity(terminal.Opacity) * 100.0;
+
+            var opacitySlider = new SettingsSlider(_theme.Accent)
+            {
+                Minimum = TerminalPreferences.MinOpacity * 100.0,
+                Maximum = TerminalPreferences.MaxOpacity * 100.0,
+                Value = opacityPercent,
+                Bounds = Rect(opacitySliderX, row2, sliderWidth, rowHeight)
+            };
+
+            TextBox opacityBox = CreateNumericBox(
+                Math.Round(opacityPercent).ToString(CultureInfo.InvariantCulture),
+                allowDecimal: false);
+
+            opacityBox.Bounds = Rect(cardWidth - innerPad - boxWidth, row2, boxWidth, rowHeight);
+            colorCard.Controls.Add(opacitySlider);
+            colorCard.Controls.Add(opacityBox);
+            LinkSlider(opacitySlider, opacityBox);
+            _terminalOpacitySlider = opacitySlider;
+
+            y += 108f * _scale + gap;
+
+            var behaviorCard = new SettingsCardPanel(_theme, _scale, "Behavior & Shell")
+            {
+                Bounds = Rect(Pad, y, cardWidth, 130f * _scale)
+            };
+            panel.Controls.Add(behaviorCard);
+
+            AddLabel(behaviorCard, "Default shell", innerPad, row1, innerWidth * 0.5f);
+            var shell = new SettingsComboBox(_theme.Accent)
+            {
+                Font = _fieldFont,
+                Bounds = Rect(cardWidth - innerPad - controlWidth, row1, controlWidth, rowHeight)
+            };
+            shell.ItemHeight = Math.Max(18, (int)MathF.Round(22f * _scale));
+            shell.Items.AddRange(TerminalPreferences.Shells);
+            shell.SelectedItem = TerminalPreferences.NormalizeShell(terminal.Shell);
+            behaviorCard.Controls.Add(shell);
+            _terminalShellCombo = shell;
+
+            _terminalAutoScrollToggle = AddCardToggle(
+                behaviorCard,
+                "Auto-scroll on output",
+                terminal.AutoScroll,
+                innerWidth,
+                innerPad,
+                row2,
+                rowHeight);
+
+            _terminalCopySelectToggle = AddCardToggle(
+                behaviorCard,
+                "Copy on select",
+                terminal.CopyOnSelect,
+                innerWidth,
+                innerPad,
+                row3,
+                rowHeight);
+        }
+
         private SettingsHotkeyBox AddHotkeyRow(
             Control parent,
             string label,
@@ -911,6 +1093,25 @@ namespace nyxWM
                     Enabled = _notifEnabledToggle?.Checked ?? true,
                     Position = _positionCombo?.SelectedItem?.ToString() ?? "TopCenter",
                     DurationMs = ParseDuration(_durationSlider?.Value)
+                },
+                Terminal = new TerminalSettings
+                {
+                    FontFamily = TerminalPreferences.NormalizeFontFamily(
+                        _terminalFontCombo?.SelectedItem?.ToString()),
+                    FontSize = TerminalPreferences.NormalizeFontSize(
+                        _terminalFontSizeSlider is null
+                            ? TerminalPreferences.MinFontSize
+                            : (float)_terminalFontSizeSlider.Value),
+                    CursorStyle = _terminalCursorSegmented?.SelectedOption
+                                  ?? TerminalPreferences.CursorDefault,
+                    CursorBlink = _terminalBlinkToggle?.Checked ?? true,
+                    ColorScheme = TerminalPreferences.NormalizeColorScheme(
+                        _terminalSchemeCombo?.SelectedItem?.ToString()),
+                    Opacity = ParseTerminalOpacity(_terminalOpacitySlider?.Value),
+                    Shell = TerminalPreferences.NormalizeShell(
+                        _terminalShellCombo?.SelectedItem?.ToString()),
+                    AutoScroll = _terminalAutoScrollToggle?.Checked ?? true,
+                    CopyOnSelect = _terminalCopySelectToggle?.Checked ?? false
                 }
             };
         }
@@ -963,6 +1164,14 @@ namespace nyxWM
                 number / 100.0,
                 VisualPreferences.MinUiScale,
                 VisualPreferences.MaxUiScale);
+        }
+
+        private static float ParseTerminalOpacity(double? value)
+        {
+            if (value is not double number || double.IsNaN(number) || double.IsInfinity(number))
+                return 0.98f;
+
+            return TerminalPreferences.NormalizeOpacity((float)(number / 100.0));
         }
 
         private static string[] CollectList(ListBox? list)

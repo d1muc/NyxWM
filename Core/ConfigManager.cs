@@ -218,7 +218,8 @@ namespace nyxWM
                     Enabled = true,
                     Position = "TopCenter",
                     DurationMs = 3200
-                }
+                },
+                Terminal = new TerminalSettings()
             };
         }
 
@@ -455,6 +456,66 @@ namespace nyxWM
                 {
                     Console.WriteLine($"Invalid notification duration: {settings.Notifications.DurationMs}. Using default 3200.");
                     settings.Notifications.DurationMs = 3200;
+                    changed = true;
+                }
+            }
+
+            // Validate terminal: null section and values outside their ranges.
+            if (settings.Terminal == null)
+            {
+                Console.WriteLine("Terminal section missing. Using defaults.");
+                settings.Terminal = new TerminalSettings();
+                changed = true;
+            }
+            else
+            {
+                TerminalSettings terminal = settings.Terminal;
+
+                string fontFamily = TerminalPreferences.NormalizeFontFamily(terminal.FontFamily);
+                if (!string.Equals(fontFamily, terminal.FontFamily, StringComparison.Ordinal))
+                {
+                    Console.WriteLine($"Invalid terminal font family: {terminal.FontFamily}. Using {fontFamily}.");
+                    terminal.FontFamily = fontFamily;
+                    changed = true;
+                }
+
+                float fontSize = TerminalPreferences.NormalizeFontSize(terminal.FontSize);
+                if (Math.Abs(fontSize - terminal.FontSize) > 0.001f)
+                {
+                    Console.WriteLine($"Invalid terminal font size: {terminal.FontSize}. Using {fontSize}.");
+                    terminal.FontSize = fontSize;
+                    changed = true;
+                }
+
+                string cursorStyle = TerminalPreferences.NormalizeCursorStyle(terminal.CursorStyle);
+                if (!string.Equals(cursorStyle, terminal.CursorStyle, StringComparison.Ordinal))
+                {
+                    Console.WriteLine($"Invalid terminal cursor style: {terminal.CursorStyle}. Using {cursorStyle}.");
+                    terminal.CursorStyle = cursorStyle;
+                    changed = true;
+                }
+
+                string colorScheme = TerminalPreferences.NormalizeColorScheme(terminal.ColorScheme);
+                if (!string.Equals(colorScheme, terminal.ColorScheme, StringComparison.Ordinal))
+                {
+                    Console.WriteLine($"Invalid terminal colour scheme: {terminal.ColorScheme}. Using {colorScheme}.");
+                    terminal.ColorScheme = colorScheme;
+                    changed = true;
+                }
+
+                float opacity = TerminalPreferences.NormalizeOpacity(terminal.Opacity);
+                if (Math.Abs(opacity - terminal.Opacity) > 0.001f)
+                {
+                    Console.WriteLine($"Invalid terminal opacity: {terminal.Opacity}. Using {opacity}.");
+                    terminal.Opacity = opacity;
+                    changed = true;
+                }
+
+                string shell = TerminalPreferences.NormalizeShell(terminal.Shell);
+                if (!string.Equals(shell, terminal.Shell, StringComparison.Ordinal))
+                {
+                    Console.WriteLine($"Invalid terminal shell: {terminal.Shell}. Using {shell}.");
+                    terminal.Shell = shell;
                     changed = true;
                 }
             }
@@ -730,6 +791,12 @@ namespace nyxWM
         /// Null until validated so missing sections are written back to config.jsonc.
         /// </summary>
         public NotificationSettings? Notifications { get; set; }
+
+        /// <summary>
+        /// Terminal behaviour: font, cursor, palette, opacity and shell.
+        /// Null until validated so a missing section is filled with defaults.
+        /// </summary>
+        public TerminalSettings? Terminal { get; set; }
     }
 
     /// <summary>

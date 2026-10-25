@@ -53,7 +53,8 @@ namespace nyxWM
             "Hotkeys",
             "Launch apps",
             "Visuals",
-            "Notifications"
+            "Notifications",
+            "Terminal"
         };
 
         private readonly NotificationTheme _theme;

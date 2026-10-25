@@ -100,6 +100,34 @@ namespace nyxWM
         }
 
         /// <summary>
+        /// Re-reads the Terminal settings and applies them to every open window
+        /// without closing it: font, cursor, palette, opacity and behaviour
+        /// switch live; a shell change restarts only the session.
+        /// </summary>
+        internal static void ApplySettingsToAll()
+        {
+            if (Windows.Count == 0)
+                return;
+
+            try
+            {
+                bool animate = VisualPreferences.SmoothAnimations;
+
+                foreach (TerminalWindow window in Windows.ToArray())
+                {
+                    if (window.IsDisposed)
+                        continue;
+
+                    window.ApplySettings(animate);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"TerminalWindowService: failed to apply terminal settings: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Closes every terminal window. Safe to call multiple times.
         /// </summary>
         internal static void CloseAll()
