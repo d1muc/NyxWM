@@ -45,7 +45,7 @@ namespace nyxWM
 
         private ListBox? _ignoredList;
 
-        private readonly SettingsHotkeyBox?[] _hotkeyBoxes = new SettingsHotkeyBox?[6];
+        private readonly SettingsHotkeyBox?[] _hotkeyBoxes = new SettingsHotkeyBox?[7];
 
         private readonly List<LaunchAppRow> _launchRows = new();
 
@@ -290,6 +290,8 @@ namespace nyxWM
             _hotkeyBoxes[4] = AddHotkeyRow(panel, "Toggle game mode", _config.Hotkeys.ToggleGameMode, width, boxWidth, fieldHeight, y);
             y += RowStep;
             _hotkeyBoxes[5] = AddHotkeyRow(panel, "Toggle launcher", _config.Hotkeys.ToggleLauncher, width, boxWidth, fieldHeight, y);
+            y += RowStep;
+            _hotkeyBoxes[6] = AddHotkeyRow(panel, "Toggle Rofi menu", _config.Hotkeys.ToggleRofiMenu, width, boxWidth, fieldHeight, y);
         }
 
         private void BuildLaunchApps(SettingsContentPanel panel, int width)
@@ -691,7 +693,8 @@ namespace nyxWM
                 CloseWindow = ValueOf(_hotkeyBoxes[2], "mainmod + c"),
                 CenterActiveWindow = ValueOf(_hotkeyBoxes[3], "mainmod + f"),
                 ToggleGameMode = ValueOf(_hotkeyBoxes[4], "mainmod + g"),
-                ToggleLauncher = ValueOf(_hotkeyBoxes[5], "mainmod + d")
+                ToggleLauncher = ValueOf(_hotkeyBoxes[5], "mainmod + d"),
+                ToggleRofiMenu = ValueOf(_hotkeyBoxes[6], "mainmod + q")
             };
 
             return new ConfigSettings

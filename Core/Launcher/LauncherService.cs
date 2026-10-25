@@ -110,9 +110,12 @@ namespace nyxWM
             {
                 float centerX = left + buttonSize / 2f + i * (buttonSize + gap);
                 LauncherIcon icon = Icons[i];
-                Action onActivated = icon == LauncherIcon.Sliders
-                    ? OpenSettings
-                    : CloseAll;
+                Action onActivated = icon switch
+                {
+                    LauncherIcon.Sliders => OpenSettings,
+                    LauncherIcon.Search => OpenRofiMenu,
+                    _ => CloseAll
+                };
 
                 var button = new LauncherButton(
                     icon,
@@ -144,6 +147,24 @@ namespace nyxWM
                 float delay = (Buttons.Count - 1 - i) * ExitStaggerMs;
                 Buttons[i].BeginClose(delay);
             }
+        }
+
+        /// <summary>
+        /// Closes the panel immediately. Used when another overlay (the Rofi
+        /// menu) takes over and must not capture fading launcher buttons.
+        /// </summary>
+        internal static void Hide()
+        {
+            CloseImmediately();
+        }
+
+        /// <summary>
+        /// Closes the panel and opens the Rofi application menu.
+        /// </summary>
+        private static void OpenRofiMenu()
+        {
+            CloseImmediately();
+            RofiMenuService.Show();
         }
 
         /// <summary>

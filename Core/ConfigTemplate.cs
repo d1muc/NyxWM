@@ -86,7 +86,9 @@ namespace nyxWM
     // Toggle game mode (pause nyxWM).
     "ToggleGameMode": "mainmod + g",
     // Show or hide the quick-action panel (settings, search, terminal).
-    "ToggleLauncher": "mainmod + d"
+    "ToggleLauncher": "mainmod + d",
+    // Show or hide the Rofi application menu.
+    "ToggleRofiMenu": "mainmod + q"
   },
 
   // Extra hotkeys that launch programs, documents or URLs.
@@ -206,7 +208,9 @@ namespace nyxWM
             sb.AppendLine("    // Toggle game mode (pause nyxWM).");
             sb.AppendLine($"    \"ToggleGameMode\": {Str(hotkeys.ToggleGameMode)},");
             sb.AppendLine("    // Show or hide the quick-action panel (settings, search, terminal).");
-            sb.AppendLine($"    \"ToggleLauncher\": {Str(hotkeys.ToggleLauncher)}");
+            sb.AppendLine($"    \"ToggleLauncher\": {Str(hotkeys.ToggleLauncher)},");
+            sb.AppendLine("    // Show or hide the Rofi application menu.");
+            sb.AppendLine($"    \"ToggleRofiMenu\": {Str(hotkeys.ToggleRofiMenu)}");
             sb.AppendLine("  },");
             sb.AppendLine();
             sb.AppendLine("  // Extra hotkeys that launch programs, documents or URLs.");

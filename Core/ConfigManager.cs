@@ -203,7 +203,8 @@ namespace nyxWM
                     CloseWindow = "mainmod + c",
                     CenterActiveWindow = "mainmod + f",
                     ToggleGameMode = "mainmod + g",
-                    ToggleLauncher = "mainmod + d"
+                    ToggleLauncher = "mainmod + d",
+                    ToggleRofiMenu = "mainmod + q"
                 },
                 Notifications = new NotificationSettings
                 {
@@ -281,7 +282,8 @@ namespace nyxWM
                     ToggleAutoCenter = "mainmod + t",
                     CloseWindow = "mainmod + c",
                     CenterActiveWindow = "mainmod + f",
-                    ToggleLauncher = "mainmod + d"
+                    ToggleLauncher = "mainmod + d",
+                    ToggleRofiMenu = "mainmod + q"
                 };
                 changed = true;
             }
@@ -328,6 +330,13 @@ namespace nyxWM
                 {
                     Console.WriteLine($"Invalid toggleLauncher hotkey: {settings.Hotkeys.ToggleLauncher}. Using default.");
                     settings.Hotkeys.ToggleLauncher = "mainmod + d";
+                    changed = true;
+                }
+
+                if (!IsValidHotkeyString(settings.Hotkeys.ToggleRofiMenu, settings.MainMod))
+                {
+                    Console.WriteLine($"Invalid toggleRofiMenu hotkey: {settings.Hotkeys.ToggleRofiMenu}. Using default.");
+                    settings.Hotkeys.ToggleRofiMenu = "mainmod + q";
                     changed = true;
                 }
 
@@ -677,5 +686,10 @@ namespace nyxWM
         /// Hotkey for showing or hiding the quick-action launcher panel.
         /// </summary>
         public string ToggleLauncher { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Hotkey for showing or hiding the Rofi application menu.
+        /// </summary>
+        public string ToggleRofiMenu { get; set; } = string.Empty;
     }
 }

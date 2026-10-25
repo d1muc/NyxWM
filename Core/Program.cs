@@ -16,6 +16,7 @@ namespace nyxWM
         internal const int HOTKEY_ID_CENTER_WINDOW = 0x0004;
         internal const int HOTKEY_ID_GAME_MODE = 0x0005;
         internal const int HOTKEY_ID_LAUNCHER = 0x0006;
+        internal const int HOTKEY_ID_ROFI_MENU = 0x0007;
         internal const int HOTKEY_ID_LAUNCH_APP_BASE = 0x1000;
         internal const int WM_HOTKEY = 0x0312;
 
@@ -51,6 +52,9 @@ namespace nyxWM
             // The settings window freezes camera panning while it is open, like a
             // lightweight game mode: the hooks stay installed so the UI still works.
             SettingsWindowService.Initialize(windowManager.SetCameraSuspended);
+
+            // The Rofi menu freezes camera panning for the same reason.
+            RofiMenuService.Initialize(windowManager.SetCameraSuspended);
 
             // Get monitor refresh rate for timer setup
             int fallbackRefreshRate = ConfigManager.Current.FallbackRefreshRate;
@@ -113,6 +117,7 @@ namespace nyxWM
 
                 NotificationService.Shutdown();
                 LauncherService.Shutdown();
+                RofiMenuService.Shutdown();
                 renderTimer?.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -139,6 +144,9 @@ namespace nyxWM
                     renderTimer?.Stop();
                 else
                     renderTimer?.Start();
+
+                if (paused)
+                    RofiMenuService.Close();
 
                 NotificationService.SetSuspended(paused);
             };
@@ -193,6 +201,7 @@ namespace nyxWM
 
                 NotificationService.Shutdown();
                 LauncherService.Shutdown();
+                RofiMenuService.Shutdown();
                 renderTimer?.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -317,6 +326,23 @@ namespace nyxWM
             else
             {
                 Console.WriteLine("Failed to register toggle launcher hotkey.");
+            }
+
+            // Toggle Rofi application menu hotkey
+            uint rofiModifiers;
+            uint rofiKey;
+            if (!ParseHotkeyString(config.Hotkeys.ToggleRofiMenu, mainmod, out rofiModifiers, out rofiKey))
+            {
+                Console.WriteLine("Invalid toggle Rofi menu hotkey in config. Using default.");
+                ParseHotkeyString("mainmod + q", mainmod, out rofiModifiers, out rofiKey);
+            }
+            if (RegisterHotKey(IntPtr.Zero, HOTKEY_ID_ROFI_MENU, rofiModifiers, rofiKey))
+            {
+                RegisteredHotkeyIds.Add(HOTKEY_ID_ROFI_MENU);
+            }
+            else
+            {
+                Console.WriteLine("Failed to register toggle Rofi menu hotkey.");
             }
 
             // Register launch app hotkeys
@@ -598,7 +624,18 @@ namespace nyxWM
                 }
                 else if (wParam == Program.HOTKEY_ID_LAUNCHER) // Toggle quick-action panel
                 {
-                    LauncherService.Toggle();
+                    // The launcher hotkey also dismisses an open Rofi menu.
+                    if (RofiMenuService.IsOpen)
+                        RofiMenuService.Close();
+                    else
+                        LauncherService.Toggle();
+
+                    return true; // Message handled
+                }
+                else if (wParam == Program.HOTKEY_ID_ROFI_MENU) // Toggle Rofi menu
+                {
+                    LauncherService.Hide();
+                    RofiMenuService.Toggle();
                     return true; // Message handled
                 }
                 else if (Program.LaunchAppPaths.TryGetValue(wParam, out string? launchPath) && launchPath != null) // Launch a configured program
