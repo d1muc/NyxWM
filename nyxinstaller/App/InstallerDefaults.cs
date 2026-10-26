@@ -46,5 +46,8 @@ public static class InstallerDefaults
             ToggleAutoCenter: "mainmod + t",
             CloseWindow: "mainmod + c",
             CenterActiveWindow: "mainmod + f",
-            ToggleGameMode: "mainmod + g"));
+            ToggleGameMode: "mainmod + g",
+            ToggleLauncher: "mainmod + d",
+            ToggleRofiMenu: "mainmod + q",
+            OpenTerminal: "mainmod + enter"));
 }

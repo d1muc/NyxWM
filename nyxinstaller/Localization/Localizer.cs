@@ -20,7 +20,7 @@ public sealed class Localizer
     public InstallerLanguage Language { get; private set; } = InstallerLanguage.English;
 
     /// <summary>
-    /// Loads <c>Strings.en.json</c> and <c>Strings.ru.json</c> from the assembly resources.
+    /// Loads every <c>Strings-&lt;code&gt;.json</c> table from the assembly resources.
     /// </summary>
     public static Localizer Load()
     {
@@ -28,12 +28,9 @@ public sealed class Localizer
         var resourceNames = assembly.GetManifestResourceNames();
 
         var tables = new Dictionary<InstallerLanguage, IReadOnlyDictionary<string, string>>();
-        foreach (var language in new[] { InstallerLanguage.English, InstallerLanguage.Russian })
+        foreach (var info in LanguageCatalog.All)
         {
-            var suffix = language == InstallerLanguage.English
-                ? "Strings-en.json"
-                : "Strings-ru.json";
-
+            var suffix = $"Strings-{info.Code}.json";
             var resourceName = resourceNames.FirstOrDefault(n => n.EndsWith(suffix, StringComparison.Ordinal));
             if (resourceName == null)
                 continue;
@@ -43,7 +40,7 @@ public sealed class Localizer
             var json = reader.ReadToEnd();
             var strings = JsonSerializer.Deserialize<Dictionary<string, string>>(json)
                           ?? new Dictionary<string, string>();
-            tables[language] = strings;
+            tables[info.Language] = strings;
         }
 
         return new Localizer(tables);
@@ -52,12 +49,20 @@ public sealed class Localizer
     public void SetLanguage(InstallerLanguage language) => Language = language;
 
     /// <summary>
-    /// Returns the localized string for <paramref name="key"/>, or the key itself when missing.
+    /// Returns the localized string for <paramref name="key"/>, falling back to English and then
+    /// to the key itself when missing.
     /// </summary>
     public string Get(string key)
     {
         if (_tables.TryGetValue(Language, out var table) && table.TryGetValue(key, out var value))
             return value;
+
+        if (_tables.TryGetValue(InstallerLanguage.English, out var english) &&
+            english.TryGetValue(key, out var fallback))
+        {
+            return fallback;
+        }
+
         return key;
     }
 

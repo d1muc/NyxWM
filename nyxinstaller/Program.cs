@@ -1,4 +1,5 @@
 using System.Windows.Forms;
+using NyxInstaller.App;
 using NyxInstaller.Localization;
 using NyxInstaller.Models;
 using NyxInstaller.Ui;
@@ -7,7 +8,7 @@ namespace NyxInstaller;
 
 /// <summary>
 /// Entry point of the nyxWM installer GUI.
-/// Supported arguments: <c>--lang ru|en</c> to preselect the installer language.
+/// Supported arguments: <c>--lang ru|en</c>, <c>--local-zip &lt;path&gt;</c>, <c>--uninstall</c>.
 /// </summary>
 internal static class Program
 {
@@ -22,13 +23,14 @@ internal static class Program
         AppDomain.CurrentDomain.UnhandledException += (_, e) => WriteCrashLog(e.ExceptionObject as Exception);
 
         var localizer = Localizer.Load();
-        var language = ParseLanguage(args);
-        if (language is not null)
-            localizer.SetLanguage(language.Value);
+        var arguments = ParseArguments(args);
+
+        if (arguments.Language is not null)
+            localizer.SetLanguage(arguments.Language.Value);
 
         try
         {
-            Application.Run(new MainForm(localizer));
+            Application.Run(new MainForm(localizer, arguments));
             return 0;
         }
         catch (Exception ex)
@@ -43,19 +45,33 @@ internal static class Program
         }
     }
 
-    private static InstallerLanguage? ParseLanguage(string[] args)
+    private static InstallerArguments ParseArguments(string[] args)
     {
-        for (var i = 0; i < args.Length - 1; i++)
-        {
-            if (!args[i].Equals("--lang", StringComparison.OrdinalIgnoreCase))
-                continue;
+        var uninstall = false;
+        InstallerLanguage? language = null;
+        string? localZipPath = null;
 
-            return args[i + 1].Equals("ru", StringComparison.OrdinalIgnoreCase)
-                ? InstallerLanguage.Russian
-                : InstallerLanguage.English;
+        for (var i = 0; i < args.Length; i++)
+        {
+            switch (args[i].ToLowerInvariant())
+            {
+                case "--uninstall":
+                    uninstall = true;
+                    break;
+
+                case "--lang" when i + 1 < args.Length:
+                    language = args[++i].Equals("ru", StringComparison.OrdinalIgnoreCase)
+                        ? InstallerLanguage.Russian
+                        : InstallerLanguage.English;
+                    break;
+
+                case "--local-zip" when i + 1 < args.Length:
+                    localZipPath = args[++i];
+                    break;
+            }
         }
 
-        return null;
+        return new InstallerArguments(uninstall, language, localZipPath);
     }
 
     private static void WriteCrashLog(Exception? exception)

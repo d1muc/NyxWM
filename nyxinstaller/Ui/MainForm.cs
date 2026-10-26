@@ -1,10 +1,10 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Reflection;
 using System.Windows.Forms;
 using NyxInstaller.App;
 using NyxInstaller.Localization;
 using NyxInstaller.Models;
+using NyxInstaller.Services;
 using NyxInstaller.Ui.Controls;
 using NyxInstaller.Ui.Pages;
 
@@ -12,7 +12,7 @@ namespace NyxInstaller.Ui;
 
 /// <summary>
 /// Borderless dark window that hosts the wizard pages, the custom title bar and the footer.
-/// Interface only: no page touches the file system or the registry.
+/// The pages only collect answers; <see cref="InstallService"/> performs the installation.
 /// </summary>
 public sealed class MainForm : Form
 {
@@ -37,16 +37,21 @@ public sealed class MainForm : Form
     private readonly Label _footerNote;
     private readonly IconButton _minimize;
     private readonly IconButton _close;
-    private readonly System.Windows.Forms.Timer _advanceTimer;
+
+    private readonly string? _localZipPath;
 
     private int _index;
     private bool _ready;
     private int _pageOffset;
     private readonly string _pageAnimKey = Animator.NextKey();
 
-    public MainForm(Localizer localizer)
+    private CancellationTokenSource? _installCts;
+    private bool _installRunning;
+
+    public MainForm(Localizer localizer, InstallerArguments? arguments = null)
     {
         _localizer = localizer;
+        _localZipPath = arguments?.LocalZipPath;
 
         AutoScaleMode = AutoScaleMode.None;
         BackColor = Theme.Background;
@@ -98,14 +103,6 @@ public sealed class MainForm : Form
         });
 
         _languagePage.LanguageChanged += (_, language) => ApplyLanguage(language);
-        _progressPage.Completed += (_, _) => OnSimulationCompleted();
-
-        _advanceTimer = new System.Windows.Forms.Timer { Interval = 700 };
-        _advanceTimer.Tick += (_, _) =>
-        {
-            _advanceTimer.Stop();
-            ShowPage(_index + 1, true);
-        };
 
         foreach (var page in _pages)
         {
@@ -160,9 +157,26 @@ public sealed class MainForm : Form
         LayoutChrome();
     }
 
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (_installRunning)
+        {
+            e.Cancel = true;
+            MessageBox.Show(
+                this,
+                _localizer.Get("install.busy"),
+                _localizer.Get("app.title"),
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        base.OnFormClosing(e);
+    }
+
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
-        _advanceTimer.Dispose();
+        _installCts?.Dispose();
         base.OnFormClosed(e);
     }
 
@@ -322,7 +336,7 @@ public sealed class MainForm : Form
             page.Localize();
 
         _back.Text = _localizer.Get("common.back");
-        _footerNote.Text = _localizer.Get("sim.notice");
+        _footerNote.Text = _localizer.Get("footer.note");
 
         UpdateNavigation();
         LayoutChrome();
@@ -393,8 +407,10 @@ public sealed class MainForm : Form
 
     private void UpdateNavigation()
     {
-        _back.Enabled = _index is > 0 and < 4;
-        _back.Visible = _index < 4;
+        var failed = _index == 4 && _progressPage.HasFailed;
+
+        _back.Visible = _index < 4 || failed;
+        _back.Enabled = (_index is > 0 and < 4) || failed;
 
         switch (_index)
         {
@@ -403,8 +419,16 @@ public sealed class MainForm : Form
                 _next.Enabled = true;
                 break;
             case 4:
-                _next.Text = _localizer.Get("common.next");
-                _next.Enabled = _progressPage.IsComplete;
+                if (failed)
+                {
+                    _next.Text = _localizer.Get("common.retry");
+                    _next.Enabled = true;
+                }
+                else
+                {
+                    _next.Text = _localizer.Get("common.next");
+                    _next.Enabled = _progressPage.IsComplete;
+                }
                 break;
             case 5:
                 _next.Text = _localizer.Get("common.finish");
@@ -421,7 +445,7 @@ public sealed class MainForm : Form
 
     private void GoBack()
     {
-        if (_index is > 0 and < 4)
+        if ((_index is > 0 and < 4) || (_index == 4 && _progressPage.HasFailed))
             ShowPage(_index - 1, true);
     }
 
@@ -433,6 +457,12 @@ public sealed class MainForm : Form
                 Close();
                 return;
             case 4:
+                if (_progressPage.HasFailed)
+                {
+                    StartInstallation();
+                    return;
+                }
+
                 if (_progressPage.IsComplete)
                     ShowPage(5, true);
                 return;
@@ -440,7 +470,7 @@ public sealed class MainForm : Form
                 if (!_configPage.Validate(out _))
                     return;
 
-                StartSimulation();
+                StartInstallation();
                 return;
             default:
                 if (!_pages[_index].Validate(out _))
@@ -451,23 +481,87 @@ public sealed class MainForm : Form
         }
     }
 
-    private void StartSimulation()
+    private async void StartInstallation()
     {
+        if (_installRunning)
+            return;
+
+        if (!_configPage.Validate(out _))
+            return;
+
+        _installRunning = true;
+        _installCts = new CancellationTokenSource();
+
         ShowPage(4, true);
         _progressPage.Begin();
         UpdateNavigation();
+
+        var options = BuildInstallOptions();
+        var config = _configPage.Collect();
+        var progress = new Progress<InstallProgress>(_progressPage.Report);
+
+        try
+        {
+            using var service = new InstallService();
+            var result = await service.InstallAsync(
+                options,
+                config,
+                progress,
+                _installCts.Token);
+
+            if (IsDisposed || Disposing)
+                return;
+
+            _progressPage.Complete();
+            _finishPage.SetSummary(
+                result.TargetPath,
+                options.RegisterAutostart,
+                options.CreateShortcut,
+                result.Version);
+
+            await Task.Delay(650);
+
+            if (IsDisposed || Disposing || _index != 4 || !_progressPage.IsComplete)
+                return;
+
+            ShowPage(5, true);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!IsDisposed && !Disposing)
+            {
+                _progressPage.Fail(_localizer.Get("install.cancelled"));
+                UpdateNavigation();
+            }
+        }
+        catch (Exception exception)
+        {
+            if (IsDisposed || Disposing)
+                return;
+
+            _progressPage.Fail(exception.Message);
+            UpdateNavigation();
+
+            MessageBox.Show(
+                this,
+                exception.Message,
+                _localizer.Get("install.failedTitle"),
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _installRunning = false;
+            _installCts?.Dispose();
+            _installCts = null;
+        }
     }
 
-    private void OnSimulationCompleted()
-    {
-        var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.2.0";
-
-        _finishPage.SetSummary(
-            _pathPage.TargetPath,
-            _optionsPage.RegisterAutostart,
-            _optionsPage.CreateShortcut,
-            version);
-
-        _advanceTimer.Start();
-    }
+    private InstallOptions BuildInstallOptions() => new(
+        _localizer.Language,
+        _pathPage.TargetPath,
+        _optionsPage.RegisterAutostart,
+        _optionsPage.CreateShortcut,
+        KeepExistingConfig: false,
+        LocalZipPath: _localZipPath);
 }

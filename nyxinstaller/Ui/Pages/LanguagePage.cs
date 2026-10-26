@@ -7,32 +7,31 @@ using NyxInstaller.Ui.Controls;
 namespace NyxInstaller.Ui.Pages;
 
 /// <summary>
-/// First page: installer language.
+/// First page: installer language. Shows the ten catalog languages in a 5×2 grid.
 /// </summary>
 public sealed class LanguagePage : WizardPage
 {
-    private readonly SelectableCard _english;
-    private readonly SelectableCard _russian;
+    private const int Columns = 5;
+
+    private readonly List<(LanguageInfo Info, SelectableCard Card)> _cards = new();
 
     public LanguagePage(Localizer localizer)
         : base(localizer)
     {
-        _english = new SelectableCard
+        foreach (var info in LanguageCatalog.All)
         {
-            Title = "English",
-            Badge = "EN"
-        };
-        _russian = new SelectableCard
-        {
-            Title = "Русский",
-            Badge = "RU"
-        };
+            var card = new SelectableCard
+            {
+                Title = info.NativeName,
+                Badge = info.Badge
+            };
 
-        _english.Click += (_, _) => Select(InstallerLanguage.English, true);
-        _russian.Click += (_, _) => Select(InstallerLanguage.Russian, true);
+            var language = info.Language;
+            card.Click += (_, _) => Select(language, true);
 
-        Controls.Add(_english);
-        Controls.Add(_russian);
+            _cards.Add((info, card));
+            Controls.Add(card);
+        }
     }
 
     public event EventHandler<InstallerLanguage>? LanguageChanged;
@@ -46,8 +45,9 @@ public sealed class LanguagePage : WizardPage
     public void Select(InstallerLanguage language, bool raiseEvent)
     {
         SelectedLanguage = language;
-        _english.Selected = language == InstallerLanguage.English;
-        _russian.Selected = language == InstallerLanguage.Russian;
+
+        foreach (var (info, card) in _cards)
+            card.Selected = info.Language == language;
 
         if (raiseEvent)
             LanguageChanged?.Invoke(this, language);
@@ -55,8 +55,9 @@ public sealed class LanguagePage : WizardPage
 
     public override void Localize()
     {
-        _english.Subtitle = Localizer.Get("language.en.subtitle");
-        _russian.Subtitle = Localizer.Get("language.ru.subtitle");
+        foreach (var (info, card) in _cards)
+            card.Subtitle = Localizer.Get($"language.{info.Code}.subtitle");
+
         Relayout();
     }
 
@@ -64,15 +65,30 @@ public sealed class LanguagePage : WizardPage
     {
         base.LayoutPage();
 
-        var cardWidth = Math.Min(S(300), (Width - S(24)) / 2);
-        var cardHeight = S(136);
-        var gap = S(24);
+        if (_cards.Count == 0 || Width <= 0 || Height <= 0)
+            return;
 
-        var totalWidth = cardWidth * 2 + gap;
-        var left = Math.Max(0, (Width - totalWidth) / 2);
-        var top = Math.Max(S(24), (Height - cardHeight) / 2 - S(12));
+        var rows = (_cards.Count + Columns - 1) / Columns;
+        var gap = S(14);
+        var cardWidth = Math.Max(S(120), (Width - gap * (Columns - 1)) / Columns);
+        var cardHeight = S(120);
 
-        _english.SetBounds(left, top, cardWidth, cardHeight);
-        _russian.SetBounds(left + cardWidth + gap, top, cardWidth, cardHeight);
+        var gridWidth = cardWidth * Columns + gap * (Columns - 1);
+        var gridHeight = cardHeight * rows + gap * (rows - 1);
+
+        var left = Math.Max(0, (Width - gridWidth) / 2);
+        var top = Math.Max(S(12), (Height - gridHeight) / 2 - S(10));
+
+        for (var i = 0; i < _cards.Count; i++)
+        {
+            var column = i % Columns;
+            var row = i / Columns;
+
+            _cards[i].Card.SetBounds(
+                left + column * (cardWidth + gap),
+                top + row * (cardHeight + gap),
+                cardWidth,
+                cardHeight);
+        }
     }
 }

@@ -1,3 +1,5 @@
+using NyxInstaller.App;
+
 namespace NyxInstaller.Services;
 
 /// <summary>
@@ -25,10 +27,78 @@ public sealed record PreflightReport(
 /// </summary>
 public sealed class PreflightChecker
 {
-    public Task<PreflightReport> CheckAsync(string targetPath, CancellationToken cancellationToken)
+    private readonly FileSystemService _fileSystem;
+    private readonly ProcessService _processes;
+
+    public PreflightChecker()
+        : this(new FileSystemService(), new ProcessService())
     {
-        // TODO(step 3): OS/arch, HEAD api.github.com, disk space, write test, marker detection,
-        // running process detection.
-        throw new NotImplementedException();
+    }
+
+    public PreflightChecker(FileSystemService fileSystem, ProcessService processes)
+    {
+        _fileSystem = fileSystem;
+        _processes = processes;
+    }
+
+    public async Task<PreflightReport> CheckAsync(string targetPath, CancellationToken cancellationToken)
+    {
+        var isSupportedOs = Environment.Is64BitOperatingSystem;
+        var hasInternet = await HasInternetAsync(cancellationToken).ConfigureAwait(false);
+        var freeSpaceMb = _fileSystem.GetFreeSpaceMb(targetPath);
+        var pathError = _fileSystem.ValidateTargetPath(targetPath);
+        var isWritable = pathError is null;
+
+        var existingInstallPath = File.Exists(
+            Path.Combine(targetPath, InstallerDefaults.MarkerFileName))
+            ? targetPath
+            : null;
+
+        var isRunning = _processes.FindRunning().Count > 0;
+
+        string? failure = null;
+
+        if (!isSupportedOs)
+            failure = "nyxWM requires 64-bit Windows.";
+        else if (!hasInternet)
+            failure = "Cannot reach GitHub. Check your internet connection.";
+        else if (freeSpaceMb < InstallerDefaults.RequiredFreeSpaceMb)
+            failure = $"Not enough free space. Need at least {InstallerDefaults.RequiredFreeSpaceMb} MB.";
+        else if (!isWritable)
+            failure = pathError;
+
+        return new PreflightReport(
+            isSupportedOs,
+            hasInternet,
+            freeSpaceMb,
+            isWritable,
+            existingInstallPath,
+            isRunning,
+            failure);
+    }
+
+    private static async Task<bool> HasInternetAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+            using var response = await client
+                .GetAsync(
+                    "https://api.github.com/",
+                    HttpCompletionOption.ResponseHeadersRead,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            // Any HTTP response, including 403 from rate limiting, proves reachability.
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }

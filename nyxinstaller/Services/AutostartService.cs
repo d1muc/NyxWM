@@ -16,8 +16,14 @@ public sealed class AutostartService
     /// </summary>
     public bool IsEnabled(string executablePath)
     {
-        // TODO(step 6): open the key, read InstallerDefaults.AutostartValueName, compare paths.
-        throw new NotImplementedException();
+        using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: false);
+        var value = key?.GetValue(InstallerDefaults.AutostartValueName) as string;
+
+        return !string.IsNullOrWhiteSpace(value) &&
+               string.Equals(
+                   NormalizeExecutable(value),
+                   NormalizeExecutable(executablePath),
+                   StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -25,8 +31,8 @@ public sealed class AutostartService
     /// </summary>
     public void Enable(string executablePath)
     {
-        // TODO(step 6): Registry.CurrentUser.CreateSubKey(RunKeyPath)?.SetValue(...).
-        throw new NotImplementedException();
+        using var key = Registry.CurrentUser.CreateSubKey(RunKeyPath);
+        key?.SetValue(InstallerDefaults.AutostartValueName, Quote(executablePath), RegistryValueKind.String);
     }
 
     /// <summary>
@@ -34,7 +40,22 @@ public sealed class AutostartService
     /// </summary>
     public void Disable()
     {
-        // TODO(step 6): DeleteValue(name, throwOnMissingValue: false).
-        throw new NotImplementedException();
+        using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);
+        key?.DeleteValue(InstallerDefaults.AutostartValueName, throwOnMissingValue: false);
+    }
+
+    private static string Quote(string path) => $"\"{path.Trim().Trim('"')}\"";
+
+    private static string NormalizeExecutable(string value)
+    {
+        var trimmed = value.Trim();
+
+        if (trimmed.StartsWith('"'))
+        {
+            var closing = trimmed.IndexOf('"', 1);
+            return closing > 0 ? trimmed[1..closing] : trimmed.Trim('"');
+        }
+
+        return trimmed;
     }
 }

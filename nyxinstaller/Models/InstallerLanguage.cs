@@ -6,5 +6,13 @@ namespace NyxInstaller.Models;
 public enum InstallerLanguage
 {
     English,
-    Russian
+    Russian,
+    Spanish,
+    ChineseSimplified,
+    Hindi,
+    Arabic,
+    Portuguese,
+    French,
+    German,
+    Japanese
 }

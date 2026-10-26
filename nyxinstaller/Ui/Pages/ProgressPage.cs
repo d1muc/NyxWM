@@ -1,17 +1,16 @@
 using System.Drawing;
 using System.Windows.Forms;
 using NyxInstaller.Localization;
+using NyxInstaller.Models;
 using NyxInstaller.Ui.Controls;
 
 namespace NyxInstaller.Ui.Pages;
 
 /// <summary>
-/// Fifth page: simulated installation progress.
+/// Fifth page: real installation progress driven by <see cref="InstallProgress"/> reports.
 /// </summary>
 public sealed class ProgressPage : WizardPage
 {
-    private const int TotalTicks = 130;
-
     private readonly Label _phaseLabel;
     private readonly Label _percentLabel;
     private readonly AccentProgressBar _bar;
@@ -19,7 +18,7 @@ public sealed class ProgressPage : WizardPage
     private readonly Label _note;
     private readonly System.Windows.Forms.Timer _timer;
 
-    private int _tick;
+    private int _pulseTick;
     private double _progress;
 
     public ProgressPage(Localizer localizer)
@@ -62,10 +61,8 @@ public sealed class ProgressPage : WizardPage
         Controls.Add(_note);
 
         _timer = new System.Windows.Forms.Timer { Interval = 40 };
-        _timer.Tick += (_, _) => OnTick();
+        _timer.Tick += (_, _) => OnPulse();
     }
-
-    public event EventHandler? Completed;
 
     public override string TitleKey => "step.progress.title";
 
@@ -73,14 +70,18 @@ public sealed class ProgressPage : WizardPage
 
     public bool IsComplete { get; private set; }
 
+    public bool HasFailed { get; private set; }
+
     public void Begin()
     {
-        _tick = 0;
-        _progress = 0;
         IsComplete = false;
-        _bar.Value = 0;
+        HasFailed = false;
+        _pulseTick = 0;
+        _progress = 0d;
+        _bar.Value = 0d;
         _percentLabel.Text = "0%";
         _phaseLabel.Text = Localizer.Get("progress.check");
+        _note.ForeColor = Theme.Dim;
         _note.Text = Localizer.Get("progress.note");
 
         for (var i = 0; i < _rows.Length; i++)
@@ -92,18 +93,106 @@ public sealed class ProgressPage : WizardPage
         _timer.Start();
     }
 
+    public void Report(InstallProgress progress)
+    {
+        if (IsDisposed || Disposing)
+            return;
+
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action<InstallProgress>(Report), progress);
+            return;
+        }
+
+        if (IsComplete || HasFailed)
+            return;
+
+        _progress = Math.Clamp(progress.Fraction, 0d, 1d);
+        _bar.Value = _progress;
+        _percentLabel.Text = $"{(int)Math.Round(_progress * 100d)}%";
+        _phaseLabel.Text = Localizer.Get(PhaseKey(progress.Phase));
+
+        if (!string.IsNullOrWhiteSpace(progress.Detail))
+            _note.Text = progress.Detail;
+
+        var phase = PhaseIndex(progress.Phase);
+        for (var i = 0; i < _rows.Length; i++)
+        {
+            _rows[i].State = i < phase
+                ? PhaseState.Done
+                : i == phase
+                    ? PhaseState.Active
+                    : PhaseState.Pending;
+        }
+    }
+
+    public void Complete()
+    {
+        if (IsDisposed || Disposing)
+            return;
+
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(Complete));
+            return;
+        }
+
+        _timer.Stop();
+        IsComplete = true;
+        _progress = 1d;
+        _bar.Value = 1d;
+        _percentLabel.Text = "100%";
+        _phaseLabel.Text = Localizer.Get("progress.done");
+        _note.ForeColor = Theme.Dim;
+        _note.Text = Localizer.Get("progress.note");
+
+        foreach (var row in _rows)
+            row.State = PhaseState.Done;
+    }
+
+    public void Fail(string message)
+    {
+        if (IsDisposed || Disposing)
+            return;
+
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action<string>(Fail), message);
+            return;
+        }
+
+        _timer.Stop();
+        HasFailed = true;
+        _phaseLabel.Text = Localizer.Get("progress.failed");
+        _note.ForeColor = Theme.Error;
+        _note.Text = message;
+
+        foreach (var row in _rows)
+        {
+            if (row.State == PhaseState.Active)
+                row.State = PhaseState.Pending;
+        }
+    }
+
     public override void Localize()
     {
         var keys = new[] { "progress.check", "progress.download", "progress.extract", "progress.install" };
         for (var i = 0; i < _rows.Length; i++)
             _rows[i].Label = Localizer.Get(keys[i]);
 
-        if (!IsComplete)
-            _phaseLabel.Text = Localizer.Get(keys[Math.Max(0, PhaseIndex(_progress))]);
-        else
+        if (IsComplete)
             _phaseLabel.Text = Localizer.Get("progress.done");
+        else if (HasFailed)
+            _phaseLabel.Text = Localizer.Get("progress.failed");
+        else
+            _phaseLabel.Text = Localizer.Get(keys[PhaseIndexFromFraction(_progress)]);
 
-        _note.Text = Localizer.Get("progress.note");
+        if (!HasFailed)
+        {
+            _note.ForeColor = Theme.Dim;
+            _note.Text = Localizer.Get("progress.note");
+        }
+
         Relayout();
     }
 
@@ -121,59 +210,40 @@ public sealed class ProgressPage : WizardPage
         base.Dispose(disposing);
     }
 
-    private static int PhaseIndex(double progress) => progress switch
+    private static string PhaseKey(InstallPhase phase) => phase switch
     {
-        < 0.12 => 0,
-        < 0.58 => 1,
+        InstallPhase.Checking => "progress.check",
+        InstallPhase.Downloading => "progress.download",
+        InstallPhase.Extracting => "progress.extract",
+        _ => "progress.install"
+    };
+
+    private static int PhaseIndex(InstallPhase phase) => phase switch
+    {
+        InstallPhase.Checking => 0,
+        InstallPhase.Downloading => 1,
+        InstallPhase.Extracting => 2,
+        _ => 3
+    };
+
+    private static int PhaseIndexFromFraction(double progress) => progress switch
+    {
+        < 0.05 => 0,
+        < 0.62 => 1,
         < 0.80 => 2,
         _ => 3
     };
 
-    private void OnTick()
+    private void OnPulse()
     {
-        _tick++;
-
-        var ratio = Math.Min(1d, (double)_tick / TotalTicks);
-        _progress = 1d - Math.Pow(1d - ratio, 1.6);
-
-        _bar.Value = _progress;
-        _percentLabel.Text = $"{(int)Math.Round(_progress * 100d)}%";
-
-        var phase = PhaseIndex(_progress);
-        var pulse = (float)((Math.Sin(_tick * 0.35) + 1d) / 2d);
-
-        for (var i = 0; i < _rows.Length; i++)
-        {
-            _rows[i].State = i < phase
-                ? PhaseState.Done
-                : i == phase
-                    ? PhaseState.Active
-                    : PhaseState.Pending;
-            _rows[i].Pulse = pulse;
-        }
-
-        _phaseLabel.Text = Localizer.Get(phase switch
-        {
-            0 => "progress.check",
-            1 => "progress.download",
-            2 => "progress.extract",
-            _ => "progress.install"
-        });
-
-        if (ratio < 1d)
-            return;
-
-        _timer.Stop();
-        IsComplete = true;
+        _pulseTick++;
+        var pulse = (float)((Math.Sin(_pulseTick * 0.35) + 1d) / 2d);
 
         foreach (var row in _rows)
-            row.State = PhaseState.Done;
-
-        _phaseLabel.Text = Localizer.Get("progress.done");
-        _percentLabel.Text = "100%";
-        _bar.Value = 1d;
-
-        Completed?.Invoke(this, EventArgs.Empty);
+        {
+            if (row.State == PhaseState.Active)
+                row.Pulse = pulse;
+        }
     }
 
     protected override void LayoutPage()
@@ -194,6 +264,6 @@ public sealed class ProgressPage : WizardPage
             top += S(42);
         }
 
-        _note.SetBounds(left, top + S(14), width, S(36));
+        _note.SetBounds(left, top + S(14), width, S(48));
     }
 }

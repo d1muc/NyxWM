@@ -8,11 +8,17 @@ using NyxInstaller.Ui.Controls;
 namespace NyxInstaller.Ui.Pages;
 
 /// <summary>
-/// Fourth page: camera settings and hotkeys.
+/// Fourth page: camera settings, main modifier and hotkeys.
 /// </summary>
 public sealed class ConfigPage : WizardPage
 {
     private const string CustomCameraValue = "__custom__";
+    private const string CustomMainModValue = "__custom__";
+
+    private static readonly string[] ModifierNames =
+    {
+        "CONTROL", "ALT", "SHIFT", "WIN", "LWIN", "RWIN"
+    };
 
     private readonly ConfigOptions _defaults;
 
@@ -26,6 +32,7 @@ public sealed class ConfigPage : WizardPage
     private readonly ToggleSwitch _autoCenterToggle;
     private readonly Label _mainModCaption;
     private readonly ChipGroup _mainModChips;
+    private readonly DarkTextBox _customMainModBox;
 
     private readonly Label _hotkeySection;
     private readonly Label[] _hotkeyCaptions;
@@ -33,12 +40,14 @@ public sealed class ConfigPage : WizardPage
     private readonly Label _hotkeyHint;
 
     private string _customCamera = string.Empty;
+    private string _customMainMod = string.Empty;
 
     public ConfigPage(Localizer localizer, ConfigOptions defaults)
         : base(localizer)
     {
         _defaults = defaults;
         _customCamera = defaults.CameraMoveButton;
+        _customMainMod = defaults.MainMod;
 
         _cameraSection = MakeSection();
         _sensitivityCaption = MakeCaption();
@@ -55,11 +64,13 @@ public sealed class ConfigPage : WizardPage
 
         _mainModCaption = MakeCaption();
         _mainModChips = new ChipGroup();
-        _mainModChips.SelectionChanged += (_, _) => ClearError();
+        _mainModChips.SelectionChanged += (_, value) => OnMainModChanged(value);
+
+        _customMainModBox = new DarkTextBox { Visible = false };
 
         _hotkeySection = MakeSection();
-        _hotkeyCaptions = new Label[5];
-        _hotkeyBoxes = new DarkTextBox[5];
+        _hotkeyCaptions = new Label[8];
+        _hotkeyBoxes = new DarkTextBox[8];
 
         var hotkeyDefaults = new[]
         {
@@ -67,7 +78,10 @@ public sealed class ConfigPage : WizardPage
             defaults.Hotkeys.ToggleAutoCenter,
             defaults.Hotkeys.CloseWindow,
             defaults.Hotkeys.CenterActiveWindow,
-            defaults.Hotkeys.ToggleGameMode
+            defaults.Hotkeys.ToggleGameMode,
+            defaults.Hotkeys.ToggleLauncher,
+            defaults.Hotkeys.ToggleRofiMenu,
+            defaults.Hotkeys.OpenTerminal
         };
 
         for (var i = 0; i < _hotkeyBoxes.Length; i++)
@@ -96,6 +110,7 @@ public sealed class ConfigPage : WizardPage
         Controls.Add(_autoCenterToggle);
         Controls.Add(_mainModCaption);
         Controls.Add(_mainModChips);
+        Controls.Add(_customMainModBox);
         Controls.Add(_hotkeySection);
         Controls.Add(_hotkeyHint);
     }
@@ -114,6 +129,7 @@ public sealed class ConfigPage : WizardPage
         _hotkeySection.Text = Localizer.Get("config.section.hotkeys");
         _hotkeyHint.Text = Localizer.Get("config.hotkeysHint");
         _customCameraBox.Placeholder = Localizer.Get("config.cameraCustomPrompt");
+        _customMainModBox.Placeholder = Localizer.Get("config.mainModCustomPrompt");
         _sensitivityBox.Placeholder = string.Empty;
 
         var hotkeyNames = new[]
@@ -122,7 +138,10 @@ public sealed class ConfigPage : WizardPage
             "hotkey.autocenter",
             "hotkey.close",
             "hotkey.center",
-            "hotkey.gamemode"
+            "hotkey.gamemode",
+            "hotkey.launcher",
+            "hotkey.rofi",
+            "hotkey.terminal"
         };
 
         for (var i = 0; i < _hotkeyCaptions.Length; i++)
@@ -138,6 +157,7 @@ public sealed class ConfigPage : WizardPage
             : _mainModChips.Selected);
 
         UpdateCustomVisibility();
+        UpdateCustomMainModVisibility();
         Relayout();
     }
 
@@ -159,11 +179,26 @@ public sealed class ConfigPage : WizardPage
             return false;
         }
 
+        var mainMod = GetMainMod();
+        if (!IsValidModifierCombo(mainMod))
+        {
+            error = Localizer.Get("config.mainModInvalid");
+            ShowError(error);
+            return false;
+        }
+
         foreach (var box in _hotkeyBoxes)
         {
             if (string.IsNullOrWhiteSpace(box.Text))
             {
                 error = Localizer.Get("config.empty");
+                ShowError(error);
+                return false;
+            }
+
+            if (!IsValidHotkey(box.Text.Trim(), mainMod))
+            {
+                error = Localizer.Get("config.hotkeyInvalid");
                 ShowError(error);
                 return false;
             }
@@ -187,17 +222,32 @@ public sealed class ConfigPage : WizardPage
             sensitivity,
             camera,
             _autoCenterToggle.Checked,
-            _mainModChips.Selected,
+            GetMainMod(),
             new HotkeyOptions(
                 _hotkeyBoxes[0].Text.Trim(),
                 _hotkeyBoxes[1].Text.Trim(),
                 _hotkeyBoxes[2].Text.Trim(),
                 _hotkeyBoxes[3].Text.Trim(),
-                _hotkeyBoxes[4].Text.Trim()));
+                _hotkeyBoxes[4].Text.Trim(),
+                _hotkeyBoxes[5].Text.Trim(),
+                _hotkeyBoxes[6].Text.Trim(),
+                _hotkeyBoxes[7].Text.Trim()));
+    }
+
+    private string GetMainMod()
+    {
+        var value = IsCustomMainMod()
+            ? _customMainModBox.Text.Trim()
+            : _mainModChips.Selected.Trim();
+
+        return string.IsNullOrWhiteSpace(value) ? _defaults.MainMod : value;
     }
 
     private bool IsCustomCamera() =>
         string.Equals(_cameraChips.Selected, CustomCameraValue, StringComparison.Ordinal);
+
+    private bool IsCustomMainMod() =>
+        string.Equals(_mainModChips.Selected, CustomMainModValue, StringComparison.Ordinal);
 
     private void OnCameraChanged(string value)
     {
@@ -209,6 +259,16 @@ public sealed class ConfigPage : WizardPage
         Relayout();
     }
 
+    private void OnMainModChanged(string value)
+    {
+        if (!IsCustomMainMod() && !string.IsNullOrWhiteSpace(value))
+            _customMainMod = value;
+
+        UpdateCustomMainModVisibility();
+        ClearError();
+        Relayout();
+    }
+
     private void UpdateCustomVisibility()
     {
         var custom = IsCustomCamera();
@@ -216,6 +276,15 @@ public sealed class ConfigPage : WizardPage
             _customCameraBox.Text = _customCamera;
 
         _customCameraBox.Visible = custom;
+    }
+
+    private void UpdateCustomMainModVisibility()
+    {
+        var custom = IsCustomMainMod();
+        if (custom && string.IsNullOrWhiteSpace(_customMainModBox.Text))
+            _customMainModBox.Text = _customMainMod;
+
+        _customMainModBox.Visible = custom;
     }
 
     private void RebuildCameraChips(string selected)
@@ -241,7 +310,8 @@ public sealed class ConfigPage : WizardPage
             ("CONTROL", "CONTROL"),
             ("ALT", "ALT"),
             ("SHIFT", "SHIFT"),
-            ("WIN", "WIN")
+            ("WIN", "WIN"),
+            (CustomMainModValue, Localizer.Get("config.mainModCustom"))
         };
 
         _mainModChips.SetOptions(Deduplicate(options), selected);
@@ -256,6 +326,43 @@ public sealed class ConfigPage : WizardPage
             if (seen.Add(option.Value))
                 yield return option;
         }
+    }
+
+    private static bool IsValidModifierCombo(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        var parts = value.Split('+', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+            return false;
+
+        foreach (var part in parts)
+        {
+            if (!ModifierNames.Contains(part.Trim().ToUpperInvariant(), StringComparer.Ordinal))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsValidHotkey(string hotkey, string mainMod)
+    {
+        if (string.IsNullOrWhiteSpace(hotkey))
+            return false;
+
+        var replaced = hotkey.Replace("mainmod", mainMod, StringComparison.OrdinalIgnoreCase);
+        var parts = replaced.Split('+', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+            return false;
+
+        for (var i = 0; i < parts.Length - 1; i++)
+        {
+            if (!ModifierNames.Contains(parts[i].Trim().ToUpperInvariant(), StringComparer.Ordinal))
+                return false;
+        }
+
+        return !string.IsNullOrWhiteSpace(parts[^1]);
     }
 
     private static bool TryParsePositive(string text, out float value)
@@ -321,18 +428,31 @@ public sealed class ConfigPage : WizardPage
         _mainModCaption.SetBounds(0, mainModTop, leftWidth, S(20));
         _mainModChips.SetBounds(0, mainModTop + S(22), leftWidth, _mainModChips.Height);
 
+        var customMainModTop = mainModTop + S(22) + _mainModChips.Height + S(8);
+        _customMainModBox.SetBounds(0, customMainModTop, Math.Min(S(260), leftWidth), S(38));
+
         _hotkeySection.SetBounds(rightX, 0, rightWidth, S(22));
 
+        var columnGap = S(18);
+        var columnWidth = Math.Max(S(120), (rightWidth - columnGap) / 2);
         var rowTop = S(28);
-        var rowStep = S(54);
+        var rowStep = S(50);
 
         for (var i = 0; i < _hotkeyBoxes.Length; i++)
         {
-            var top = rowTop + i * rowStep;
-            _hotkeyCaptions[i].SetBounds(rightX, top, rightWidth, S(18));
-            _hotkeyBoxes[i].SetBounds(rightX, top + S(20), rightWidth, S(34));
+            var column = i / 4;
+            var row = i % 4;
+            var left = rightX + column * (columnWidth + columnGap);
+            var top = rowTop + row * rowStep;
+
+            _hotkeyCaptions[i].SetBounds(left, top, columnWidth, S(18));
+            _hotkeyBoxes[i].SetBounds(left, top + S(20), columnWidth, S(34));
         }
 
-        _hotkeyHint.SetBounds(rightX, rowTop + _hotkeyBoxes.Length * rowStep + S(2), rightWidth, S(32));
+        _hotkeyHint.SetBounds(
+            rightX,
+            rowTop + 4 * rowStep + S(2),
+            rightWidth,
+            S(32));
     }
 }

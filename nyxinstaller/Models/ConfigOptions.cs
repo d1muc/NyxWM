@@ -19,4 +19,7 @@ public sealed record HotkeyOptions(
     string ToggleAutoCenter,
     string CloseWindow,
     string CenterActiveWindow,
-    string ToggleGameMode);
+    string ToggleGameMode,
+    string ToggleLauncher,
+    string ToggleRofiMenu,
+    string OpenTerminal);

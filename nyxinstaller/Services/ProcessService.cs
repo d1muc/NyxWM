@@ -14,16 +14,59 @@ public sealed class ProcessService
     /// </summary>
     public IReadOnlyList<Process> FindRunning()
     {
-        // TODO(step 6): Process.GetProcessesByName(ProcessName).
-        throw new NotImplementedException();
+        try
+        {
+            return Process.GetProcessesByName(ProcessName);
+        }
+        catch
+        {
+            return Array.Empty<Process>();
+        }
     }
 
     /// <summary>
-    /// Asks the user, then stops the process with a graceful close and a forced fallback.
+    /// Asks the process to close gracefully, then stops it with a forced fallback.
     /// </summary>
-    public Task StopAsync(IReadOnlyList<Process> processes, CancellationToken cancellationToken)
+    public async Task StopAsync(
+        IReadOnlyList<Process> processes,
+        CancellationToken cancellationToken)
     {
-        // TODO(step 6): CloseMainWindow, wait, Kill, wait.
-        throw new NotImplementedException();
+        foreach (var process in processes)
+        {
+            try
+            {
+                if (process.HasExited)
+                    continue;
+
+                if (process.CloseMainWindow())
+                {
+                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    timeout.CancelAfter(TimeSpan.FromSeconds(5));
+
+                    try
+                    {
+                        await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        // Graceful close timed out; fall through to Kill.
+                    }
+                }
+
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                    await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // Process exited between checks.
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }
     }
 }
