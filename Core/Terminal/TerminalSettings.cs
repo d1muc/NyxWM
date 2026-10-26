@@ -40,6 +40,13 @@ namespace nyxWM
         /// </summary>
         public string Shell { get; set; } = "zsh";
 
+        /// <summary>
+        /// Custom shell prompt. Empty keeps the shell's own prompt. Passed to
+        /// zsh as PROMPT, to bash as PS1 and to cmd as PROMPT; PowerShell
+        /// ignores it. Applies to terminals opened after the change.
+        /// </summary>
+        public string Prompt { get; set; } = string.Empty;
+
         /// <summary>Scrolls to the newest output when the shell writes.</summary>
         public bool AutoScroll { get; set; } = true;
 

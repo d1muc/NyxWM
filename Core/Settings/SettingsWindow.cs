@@ -13,9 +13,10 @@ namespace nyxWM
     /// fade/slide animation and closes with the reverse animation. Tabs slide
     /// their pages horizontally and the accent underline glides between them.
     /// </summary>
-    internal sealed class SettingsWindow : Form
+    internal sealed class SettingsWindow : Form, IMessageFilter
     {
         private const int WS_EX_TOOLWINDOW = 0x00000080;
+        private const int WM_MOUSEWHEEL = 0x020A;
 
         private const float BaseWidthDip = 880f;
         private const float BaseHeightDip = 640f;
@@ -78,7 +79,9 @@ namespace nyxWM
         private readonly SettingsContentBuilder _contentBuilder;
         private readonly SettingsContentPanel _viewport;
         private readonly SettingsContentPanel[] _tabPanels;
+        private readonly int[] _scrollOffsets;
         private readonly Point _targetLocation;
+        private bool _wheelFilterInstalled;
 
         private double _lastTickMs;
         private float _elapsedMs;
@@ -175,8 +178,13 @@ namespace nyxWM
             foreach (SettingsContentPanel page in _tabPanels)
             {
                 page.Visible = false;
+                page.MinimumHeight = contentHeight;
+                page.ContentPadding = (int)MathF.Round(16f * _scale);
+                page.FitToContent();
                 _viewport.Controls.Add(page);
             }
+
+            _scrollOffsets = new int[_tabPanels.Length];
 
             _tabPanels[_activeTab].Visible = true;
             Controls.Add(_viewport);
@@ -205,10 +213,72 @@ namespace nyxWM
         {
             base.OnShown(e);
 
+            if (!_wheelFilterInstalled)
+            {
+                Application.AddMessageFilter(this);
+                _wheelFilterInstalled = true;
+            }
+
             _clock.Restart();
             _lastTickMs = 0.0;
             _timer.Start();
             Activate();
+        }
+
+        /// <summary>
+        /// Scrolls the active page on wheel over the content area, including
+        /// when the pointer rests on a label or a card that would otherwise
+        /// swallow the message.
+        /// </summary>
+        public bool PreFilterMessage(ref Message message)
+        {
+            if (message.Msg != WM_MOUSEWHEEL || !Visible || _closing || IsDisposed)
+                return false;
+
+            if (!_viewport.IsHandleCreated)
+                return false;
+
+            int x = unchecked((short)(long)message.LParam);
+            int y = unchecked((short)((long)message.LParam >> 16));
+
+            if (!_viewport.RectangleToScreen(_viewport.ClientRectangle).Contains(x, y))
+                return false;
+
+            int delta = unchecked((short)((long)message.WParam >> 16));
+            if (delta == 0)
+                return false;
+
+            ScrollActivePage(delta);
+            return true;
+        }
+
+        private void ScrollActivePage(int wheelDelta)
+        {
+            int lines = SystemInformation.MouseWheelScrollLines;
+            if (lines == 0)
+                return;
+
+            SettingsContentPanel page = _tabPanels[_activeTab];
+            int viewportHeight = _viewport.ClientSize.Height;
+
+            if (page.Height <= viewportHeight)
+                return;
+
+            int notches = wheelDelta / 120;
+            if (notches == 0)
+                notches = Math.Sign(wheelDelta);
+
+            int step = lines < 0
+                ? viewportHeight
+                : (int)MathF.Round(lines * 44f * _scale);
+
+            int offset = Math.Clamp(
+                _scrollOffsets[_activeTab] - notches * step,
+                0,
+                page.Height - viewportHeight);
+
+            _scrollOffsets[_activeTab] = offset;
+            page.Top = -offset;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -825,6 +895,12 @@ namespace nyxWM
         {
             if (disposing)
             {
+                if (_wheelFilterInstalled)
+                {
+                    Application.RemoveMessageFilter(this);
+                    _wheelFilterInstalled = false;
+                }
+
                 _timer.Tick -= OnTick;
                 _timer.Dispose();
                 _titleFont.Dispose();

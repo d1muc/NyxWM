@@ -70,6 +70,7 @@ namespace nyxWM
         private SettingsComboBox? _terminalShellCombo;
         private SettingsToggle? _terminalAutoScrollToggle;
         private SettingsToggle? _terminalCopySelectToggle;
+        private TextBox? _terminalPromptBox;
 
         internal SettingsContentBuilder(NotificationTheme theme, float scale, ConfigSettings config)
         {
@@ -361,6 +362,8 @@ namespace nyxWM
                     float addY = rowsTop + _launchRows.Count * rowStep + 6f * _scale;
                     addButton.Bounds = Rect(Pad, addY, 116f * _scale, rowHeight);
                 }
+
+                panel.FitToContent();
             }
 
             void AddRow(string hotkey, string path)
@@ -823,7 +826,7 @@ namespace nyxWM
 
             var behaviorCard = new SettingsCardPanel(_theme, _scale, "Behavior & Shell")
             {
-                Bounds = Rect(Pad, y, cardWidth, 130f * _scale)
+                Bounds = Rect(Pad, y, cardWidth, 160f * _scale)
             };
             panel.Controls.Add(behaviorCard);
 
@@ -856,6 +859,26 @@ namespace nyxWM
                 innerPad,
                 row3,
                 rowHeight);
+
+            AddLabel(behaviorCard, "Prompt", innerPad, row4, innerWidth * 0.5f);
+
+            float promptWidth = Math.Min(innerWidth * 0.48f, 320f * _scale);
+            var promptBox = new TextBox
+            {
+                Font = _fieldFont,
+                Text = TerminalPreferences.NormalizePrompt(terminal.Prompt),
+                BackColor = SettingsPalette.FieldBackground,
+                ForeColor = SettingsPalette.TextPrimary,
+                BorderStyle = BorderStyle.FixedSingle,
+                Bounds = Rect(
+                    cardWidth - innerPad - promptWidth,
+                    row4,
+                    promptWidth,
+                    rowHeight)
+            };
+
+            behaviorCard.Controls.Add(promptBox);
+            _terminalPromptBox = promptBox;
         }
 
         private SettingsHotkeyBox AddHotkeyRow(
@@ -1110,6 +1133,7 @@ namespace nyxWM
                     Opacity = ParseTerminalOpacity(_terminalOpacitySlider?.Value),
                     Shell = TerminalPreferences.NormalizeShell(
                         _terminalShellCombo?.SelectedItem?.ToString()),
+                    Prompt = TerminalPreferences.NormalizePrompt(_terminalPromptBox?.Text),
                     AutoScroll = _terminalAutoScrollToggle?.Checked ?? true,
                     CopyOnSelect = _terminalCopySelectToggle?.Checked ?? false
                 }

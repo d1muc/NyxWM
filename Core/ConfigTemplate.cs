@@ -164,6 +164,10 @@ namespace nyxWM
     // Shell started by the terminal.
     // Options: zsh (default), bash (both from MSYS2), powershell, cmd.
     "Shell": "zsh",
+    // Custom shell prompt. Empty keeps the shell's own prompt.
+    // zsh: PROMPT (% escapes), bash: PS1 (\ escapes), cmd: PROMPT.
+    // PowerShell ignores this value. Applies to terminals opened after the change.
+    "Prompt": "",
     // Scroll to the newest output when the shell writes.
     "AutoScroll": true,
     // Copy a mouse selection to the clipboard on release.
@@ -341,6 +345,10 @@ namespace nyxWM
             sb.AppendLine("    // Shell started by the terminal.");
             sb.AppendLine("    // Options: zsh (default), bash (both from MSYS2), powershell, cmd.");
             sb.AppendLine($"    \"Shell\": {Str(terminal.Shell)},");
+            sb.AppendLine("    // Custom shell prompt. Empty keeps the shell's own prompt.");
+            sb.AppendLine("    // zsh: PROMPT (% escapes), bash: PS1 (\\ escapes), cmd: PROMPT.");
+            sb.AppendLine("    // PowerShell ignores this value. Applies to terminals opened after the change.");
+            sb.AppendLine($"    \"Prompt\": {Str(TerminalPreferences.NormalizePrompt(terminal.Prompt))},");
             sb.AppendLine("    // Scroll to the newest output when the shell writes.");
             sb.AppendLine($"    \"AutoScroll\": {Bool(terminal.AutoScroll)},");
             sb.AppendLine("    // Copy a mouse selection to the clipboard on release.");

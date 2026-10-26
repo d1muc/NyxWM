@@ -13,6 +13,14 @@ namespace nyxWM
     {
         private readonly NotificationTheme _theme;
 
+        /// <summary>
+        /// Smallest height the page keeps when it fits without scrolling.
+        /// </summary>
+        internal int MinimumHeight;
+
+        /// <summary>Empty space kept below the lowest control.</summary>
+        internal int ContentPadding = 24;
+
         internal SettingsContentPanel(NotificationTheme theme)
         {
             _theme = theme;
@@ -54,6 +62,24 @@ namespace nyxWM
                 LinearGradientMode.Vertical);
 
             e.Graphics.FillRectangle(brush, ClientRectangle);
+        }
+
+        /// <summary>
+        /// Grows the page so every control stays reachable by scrolling.
+        /// Called after the page is built and whenever rows are added or
+        /// removed at runtime.
+        /// </summary>
+        internal void FitToContent()
+        {
+            int required = MinimumHeight;
+
+            foreach (Control control in Controls)
+            {
+                required = Math.Max(required, control.Bottom + ContentPadding);
+            }
+
+            if (Height != required)
+                Height = required;
         }
     }
 }

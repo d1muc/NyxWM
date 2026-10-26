@@ -518,6 +518,14 @@ namespace nyxWM
                     terminal.Shell = shell;
                     changed = true;
                 }
+
+                string prompt = TerminalPreferences.NormalizePrompt(terminal.Prompt);
+                if (!string.Equals(prompt, terminal.Prompt, StringComparison.Ordinal))
+                {
+                    Console.WriteLine($"Invalid terminal prompt normalized to '{prompt}'.");
+                    terminal.Prompt = prompt;
+                    changed = true;
+                }
             }
 
             if (changed)

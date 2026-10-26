@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Text;
 
 namespace nyxWM
 {
@@ -16,6 +18,7 @@ namespace nyxWM
         internal const float MaxFontSize = 18f;
         internal const float MinOpacity = 0.4f;
         internal const float MaxOpacity = 1f;
+        internal const int MaxPromptLength = 256;
 
         internal const string CursorBlock = "Block";
         internal const string CursorLine = "Line";
@@ -62,6 +65,9 @@ namespace nyxWM
         {
             "Cascadia Code", "Cascadia Mono", "JetBrains Mono", "Fira Code", "Consolas"
         };
+
+        private static readonly IReadOnlyDictionary<string, string> EmptyEnvironment =
+            new Dictionary<string, string>(0, StringComparer.OrdinalIgnoreCase);
 
         /// <summary>Live terminal settings, never null.</summary>
         internal static TerminalSettings Current =>
@@ -177,6 +183,54 @@ namespace nyxWM
             }
 
             return ShellDefault;
+        }
+
+        /// <summary>
+        /// Trims the configured prompt and drops characters an environment
+        /// block cannot carry. Empty means "keep the shell's own prompt".
+        /// </summary>
+        internal static string NormalizePrompt(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            var builder = new StringBuilder(value.Length);
+
+            foreach (char c in value.Trim())
+            {
+                if (c == '\0' || c == '\r')
+                    continue;
+
+                if (builder.Length >= MaxPromptLength)
+                    break;
+
+                builder.Append(c);
+            }
+
+            return builder.ToString();
+        }
+
+        /// <summary>
+        /// Environment variables that override the shell prompt. zsh reads
+        /// PROMPT, bash reads PS1 and the official MSYS2 override MSYS2_PS1,
+        /// cmd reads PROMPT. PowerShell builds its prompt from a function, so
+        /// it is left untouched.
+        /// </summary>
+        internal static IReadOnlyDictionary<string, string> BuildPromptEnvironment(
+            string? shellName,
+            string? prompt)
+        {
+            string value = NormalizePrompt(prompt);
+
+            if (value.Length == 0 || NormalizeShell(shellName) == ShellPowerShell)
+                return EmptyEnvironment;
+
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["PROMPT"] = value,
+                ["PS1"] = value,
+                ["MSYS2_PS1"] = value
+            };
         }
 
         internal static float NormalizeOpacity(float value)

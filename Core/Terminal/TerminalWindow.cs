@@ -1352,7 +1352,10 @@ namespace nyxWM
                     Rows = _consoleRows,
                     ShellPath = launch.Path,
                     ShellArguments = launch.Arguments,
-                    UseMsysEnvironment = launch.UseMsysEnvironment
+                    UseMsysEnvironment = launch.UseMsysEnvironment,
+                    EnvironmentOverrides = TerminalPreferences.BuildPromptEnvironment(
+                        _shellName,
+                        TerminalPreferences.Current.Prompt)
                 });
 
                 screen.ResponseRequested += response => session.WriteInput(response);
