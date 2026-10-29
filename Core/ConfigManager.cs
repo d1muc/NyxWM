@@ -201,6 +201,7 @@ namespace nyxWM
                 SmoothAnimations = true,
                 CornerStyle = "Rounded",
                 CameraMoveButton = "MBUTTON",
+                HideCursorWhileMovingCamera = true,
                 IgnoredWindowClassNames = new[] { "Shell_TrayWnd", "Progman", "WorkerW", "CEF-OSC-WIDGET", "NvOverlayWindow" },
                 Hotkeys = new HotkeySettings
                 {
@@ -765,6 +766,11 @@ namespace nyxWM
         /// The button or key combination used to move the camera (e.g., "MBUTTON", "ALT+LEFT").
         /// </summary>
         public string CameraMoveButton { get; set; } = "MBUTTON";
+
+        /// <summary>
+        /// Hide the mouse pointer while the camera gesture is active.
+        /// </summary>
+        public bool HideCursorWhileMovingCamera { get; set; } = true;
 
         /// <summary>
         /// Sensitivity of camera movement (higher = faster movement). Must be > 0.

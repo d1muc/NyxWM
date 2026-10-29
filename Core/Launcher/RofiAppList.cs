@@ -17,7 +17,7 @@ namespace nyxWM
         private const float RowHeightDip = 52f;
         private const float IconSizeDip = 32f;
         private const float IconRadiusDip = 9f;
-        private const float ScrollbarWidthDip = 5f;
+        private const float ScrollbarWidthDip =1f;
         private const float ScrollbarMarginDip = 4f;
         private const float SelectionSmoothingPerSecond = 26f;
 
@@ -28,10 +28,14 @@ namespace nyxWM
         private readonly Font _metaFont;
         private readonly Font _badgeFont;
         private readonly Font _iconFont;
+        private readonly Font _menuFont;
+        private readonly RofiContextMenu _pinMenu;
+        private readonly ToolStripMenuItem _pinAction;
         private readonly Dictionary<string, Bitmap?> _iconCache =
             new(StringComparer.OrdinalIgnoreCase);
 
         private IReadOnlyList<RofiApp> _items = Array.Empty<RofiApp>();
+        private RofiApp? _pinTarget;
         private int _selectedIndex = -1;
         private int _topIndex;
         private int _hoverIndex = -1;
@@ -48,6 +52,11 @@ namespace nyxWM
             _metaFont = VisualPreferences.CreateUiFont("Segoe UI", 8.25f, FontStyle.Regular);
             _badgeFont = VisualPreferences.CreateUiFont("Segoe UI", 7.75f, FontStyle.Regular);
             _iconFont = VisualPreferences.CreateUiFont("Segoe UI", 9.5f, FontStyle.Bold);
+            _menuFont = VisualPreferences.CreateUiFont("Segoe UI", 9.5f, FontStyle.Regular);
+
+            _pinMenu = new RofiContextMenu(_theme, _scale, _menuFont);
+            _pinAction = _pinMenu.AddAction("Pin to top");
+            _pinAction.Click += (_, _) => TogglePinnedTarget();
 
             SetStyle(
                 ControlStyles.UserPaint |
@@ -64,8 +73,14 @@ namespace nyxWM
 
         internal event Action<RofiApp, bool>? ItemActivated;
 
+        /// <summary>
+        /// Raised after a pinned entry was added or removed from the list.
+        /// </summary>
+        internal event Action? PinsChanged;
+
         internal int SelectedIndex => _selectedIndex;
         internal int VisibleRowCount => Math.Max(1, Height / ItemHeight);
+        internal bool IsPinMenuOpen => _pinMenu.Visible;
 
         internal bool HasSelection =>
             _selectedIndex >= 0 && _selectedIndex < _items.Count;
@@ -74,13 +89,30 @@ namespace nyxWM
 
         private int ItemHeight => Math.Max(1, (int)MathF.Round(RowHeightDip * _scale));
 
-        internal void SetItems(IReadOnlyList<RofiApp> items)
+        internal void SetItems(IReadOnlyList<RofiApp> items, bool preserveSelection = false)
         {
-            _items = items ?? Array.Empty<RofiApp>();
-            _selectedIndex = _items.Count > 0 ? 0 : -1;
+            string? keepPath = preserveSelection ? SelectedItem?.Path : null;
+
+            _items = RofiPins.Order(items ?? Array.Empty<RofiApp>());
+
+            int selected = 0;
+            if (!string.IsNullOrWhiteSpace(keepPath))
+            {
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    if (string.Equals(_items[i].Path, keepPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        selected = i;
+                        break;
+                    }
+                }
+            }
+
+            _selectedIndex = _items.Count > 0 ? selected : -1;
             _topIndex = 0;
             _hoverIndex = -1;
             SnapHighlight();
+            EnsureSelectionVisible();
             Invalidate();
         }
 
@@ -550,11 +582,24 @@ namespace nyxWM
         {
             base.OnMouseDown(e);
 
-            if (e.Button != MouseButtons.Left)
-                return;
-
             int index = HitTest(e.Y);
             if (index < 0)
+                return;
+
+            if (e.Button == MouseButtons.Right)
+            {
+                _selectedIndex = index;
+                EnsureSelectionVisible();
+
+                if (!_smooth)
+                    SnapHighlight();
+
+                Invalidate();
+                ShowPinMenu(_items[index], e.Location);
+                return;
+            }
+
+            if (e.Button != MouseButtons.Left)
                 return;
 
             _selectedIndex = index;
@@ -564,6 +609,25 @@ namespace nyxWM
                 SnapHighlight();
 
             Invalidate();
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+
+            if (e.Button != MouseButtons.Left)
+                return;
+
+            int index = HitTest(e.Y);
+            if (index < 0)
+                return;
+
+            _selectedIndex = index;
+
+            if (!_smooth)
+                SnapHighlight();
+
+            ActivateSelected(asAdministrator: false);
         }
 
         protected override void OnMouseDoubleClick(MouseEventArgs e)
@@ -577,7 +641,29 @@ namespace nyxWM
         protected override void OnMouseWheel(MouseEventArgs e)
         {
             base.OnMouseWheel(e);
-            MoveSelection(e.Delta > 0 ? -3 : 3);
+            MoveSelection(e.Delta > 0 ? -1 : 1);
+        }
+
+        private void ShowPinMenu(RofiApp app, Point location)
+        {
+            _pinTarget = app;
+            _pinAction.Text = RofiPins.IsPinned(app.Path)
+                ? "Unpin from top"
+                : "Pin to top";
+
+            _pinMenu.Show(this, location);
+        }
+
+        private void TogglePinnedTarget()
+        {
+            RofiApp? app = _pinTarget;
+            _pinTarget = null;
+
+            if (app == null || string.IsNullOrWhiteSpace(app.Path))
+                return;
+
+            RofiPins.Toggle(app.Path);
+            PinsChanged?.Invoke();
         }
 
         protected override void OnSizeChanged(EventArgs e)
@@ -628,6 +714,8 @@ namespace nyxWM
                 _metaFont.Dispose();
                 _badgeFont.Dispose();
                 _iconFont.Dispose();
+                _pinMenu.Dispose();
+                _menuFont.Dispose();
 
                 foreach (Bitmap? image in _iconCache.Values)
                     image?.Dispose();

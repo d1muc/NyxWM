@@ -165,7 +165,8 @@ namespace nyxWM
             // Subscribe to mouse hook events
             mouseHook.OnDragStart += () =>
             {
-                if (mouseHook.IsMouseButtonBind)
+                if (mouseHook.IsMouseButtonBind
+                    && ConfigManager.Current.HideCursorWhileMovingCamera)
                     CursorHider.Hide();
 
                 windowManager.StartDragging();

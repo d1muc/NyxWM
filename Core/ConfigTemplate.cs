@@ -52,6 +52,10 @@ namespace nyxWM
   // Default: "MBUTTON".
   "CameraMoveButton": "MBUTTON",
 
+  // Hide the mouse pointer while the camera gesture is active.
+  // Type: true | false. Default: true.
+  "HideCursorWhileMovingCamera": true,
+
   // Multiplier for camera movement (higher = faster). Type: number > 0. Default: 1.0.
   "CameraSensitivity": 1.0,
 
@@ -233,6 +237,10 @@ namespace nyxWM
             sb.AppendLine("  // Modifiers and keys are allowed, e.g. \"ALT+LEFT\", \"mainmod+MBUTTON\".");
             sb.AppendLine("  // Default: \"MBUTTON\".");
             sb.AppendLine($"  \"CameraMoveButton\": {Str(settings.CameraMoveButton)},");
+            sb.AppendLine();
+            sb.AppendLine("  // Hide the mouse pointer while the camera gesture is active.");
+            sb.AppendLine("  // Type: true | false. Default: true.");
+            sb.AppendLine($"  \"HideCursorWhileMovingCamera\": {Bool(settings.HideCursorWhileMovingCamera)},");
             sb.AppendLine();
             sb.AppendLine("  // Multiplier for camera movement (higher = faster). Type: number > 0. Default: 1.0.");
             sb.AppendLine($"  \"CameraSensitivity\": {Num(settings.CameraSensitivity)},");

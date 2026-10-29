@@ -137,6 +137,7 @@ namespace nyxWM
 
             _list = new RofiAppList(_theme, _scale);
             _list.ItemActivated += OnItemActivated;
+            _list.PinsChanged += () => ApplyFilter(preserveSelection: true);
 
             Controls.Add(_list);
             Controls.Add(_search);
@@ -204,8 +205,12 @@ namespace nyxWM
             // Clicks outside the menu dismiss it, like Rofi. Keyboard-driven
             // focus changes, such as switching the keyboard layout, must not
             // close the menu. The short guard ignores the deactivation that can
-            // happen while the window is still appearing.
-            if (!_closing && _elapsedMs > 140f && IsMouseButtonDown())
+            // happen while the window is still appearing. The pin popup is part
+            // of the menu, so it must not dismiss it either.
+            if (!_closing
+                && _elapsedMs > 140f
+                && !_list.IsPinMenuOpen
+                && IsMouseButtonDown())
                 BeginClose();
         }
 
@@ -382,7 +387,7 @@ namespace nyxWM
         {
             DrawBadgeRow(
                 graphics,
-                new[] { ("↑↓", "Navigate"), ("↵", "Select"), ("ESC", "Close") },
+                new[] { ("↑↓", "Navigate"), ("↵", "Select"), ("RMB", "Pin"), ("ESC", "Close") },
                 _footerRect.Top + 10f * _scale);
 
             DrawBadgeRow(
@@ -491,6 +496,11 @@ namespace nyxWM
 
         private void OnItemActivated(RofiApp app, bool asAdministrator)
         {
+            // A single click and a follow-up double click can both land while
+            // the close animation runs; only the first request may launch.
+            if (_closing)
+                return;
+
             TryLaunch(app, asAdministrator);
             BeginClose();
         }
@@ -551,9 +561,11 @@ namespace nyxWM
             };
         }
 
-        private void ApplyFilter()
+        private void ApplyFilter(bool preserveSelection = false)
         {
-            _list.SetItems(RofiSearch.Filter(RofiAppCatalog.GetApps(), _search.Text));
+            _list.SetItems(
+                RofiSearch.Filter(RofiAppCatalog.GetApps(), _search.Text),
+                preserveSelection);
         }
 
         internal void RequestClose()

@@ -42,6 +42,7 @@ namespace nyxWM
 
         private SettingsHotkeyBox? _cameraMoveBox;
         private SettingsSlider? _sensitivitySlider;
+        private SettingsToggle? _hideCursorToggle;
 
         private ListBox? _ignoredList;
 
@@ -210,6 +211,14 @@ namespace nyxWM
             panel.Controls.Add(sensitivityBox);
             LinkSlider(sensitivitySlider, sensitivityBox);
             _sensitivitySlider = sensitivitySlider;
+            y += RowStep;
+
+            _hideCursorToggle = AddToggleRow(
+                panel,
+                "Hide cursor when moving camera",
+                _config.HideCursorWhileMovingCamera,
+                width,
+                y);
         }
 
         private void BuildWindows(SettingsContentPanel panel, int width)
@@ -1100,6 +1109,7 @@ namespace nyxWM
                 MainMod = mainMod,
                 CameraMoveButton = ValueOf(_cameraMoveBox, "MBUTTON"),
                 CameraSensitivity = ParseFloat(_sensitivitySlider?.Value, 1.0f),
+                HideCursorWhileMovingCamera = _hideCursorToggle?.Checked ?? true,
                 IgnoredWindowClassNames = CollectList(_ignoredList),
                 Hotkeys = hotkeys,
                 LaunchApps = CollectLaunchApps(),
