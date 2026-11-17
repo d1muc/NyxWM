@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -89,6 +89,18 @@ namespace nyxWM
         /// suspend background components that are not needed during gameplay.
         /// </summary>
         public event Action<bool>? PauseChanged;
+
+        /// <summary>
+        /// Raised on the render thread when the workspace offset has fully settled
+        /// and no further window positions will be applied until the next drag.
+        /// </summary>
+        public event Action? Settled;
+
+        /// <summary>
+        /// Raised when a camera gesture starts, so the animation host can leave its
+        /// idle cadence. Raised from the thread that runs the mouse hook.
+        /// </summary>
+        public event Action? RenderActivityRequested;
 
         /// <summary>
         /// Gets whether the window manager is paused (game mode).
@@ -589,6 +601,10 @@ namespace nyxWM
                 // Drop movement that arrived before the drag started.
                 _rawInput.Flush();
 
+                // The ticker may be parked at its idle cadence; this gesture needs
+                // full frame rate from the very first frame.
+                RenderActivityRequested?.Invoke();
+
                 // Cache the current positions of the managed windows. The handle list itself is
                 // reused, so no EnumWindows sweep unless windows were created since the last scan.
                 RefreshRenderCache();
@@ -719,6 +735,7 @@ namespace nyxWM
                     targetDx = currentDx;
                     targetDy = currentDy;
                     _isAnimating = false;
+                    RaiseSettled();
                 }
             }
             else
@@ -776,6 +793,42 @@ namespace nyxWM
                 targetDx = currentDx + deltaX;
                 targetDy = currentDy + deltaY;
                 _isAnimating = true;
+            }
+        }
+
+        /// <summary>
+        /// True while any window offset is still being applied. Game mode polls this
+        /// before stopping the render ticker, so the workspace settles first.
+        /// </summary>
+        public bool IsRendering
+        {
+            get
+            {
+                lock (_motionLock)
+                {
+                    return _isAnimating || isDragging;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Raises <see cref="Settled"/> outside the motion lock, so a handler is
+        /// free to call back into this manager. Called from the render thread.
+        /// </summary>
+        private void RaiseSettled()
+        {
+            Action? handler = Settled;
+
+            if (handler == null)
+                return;
+
+            try
+            {
+                handler();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"WindowManager: settled handler failed: {ex.Message}");
             }
         }
 
@@ -859,17 +912,23 @@ namespace nyxWM
                 if (dx == _lastAppliedDx && dy == _lastAppliedDy)
                 {
                     if (settled)
+                    {
                         _isAnimating = false;
+                        RaiseSettled();
+                    }
                     return;
                 }
 
-                // Snapshot the published render cache (never mutated after publication)
-                lock (_positionsLock)
-                {
-                    handles = _renderHandles;
-                    rects = _renderRects;
-                    count = _renderCount;
-                }
+            }
+
+            // Snapshot the published render cache outside the motion lock. The
+            // arrays are immutable and only swapped under _positionsLock, which
+            // keeps the UI thread from waiting on this render thread.
+            lock (_positionsLock)
+            {
+                handles = _renderHandles;
+                rects = _renderRects;
+                count = _renderCount;
             }
 
             if (count == 0)
@@ -879,7 +938,10 @@ namespace nyxWM
                     _lastAppliedDx = dx;
                     _lastAppliedDy = dy;
                     if (settled)
+                    {
                         _isAnimating = false;
+                        RaiseSettled();
+                    }
                 }
                 return;
             }
@@ -920,7 +982,10 @@ namespace nyxWM
                 _lastAppliedDy = dy;
 
                 if (settled)
+                {
                     _isAnimating = false;
+                    RaiseSettled();
+                }
             }
         }
 

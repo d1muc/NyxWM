@@ -1,15 +1,14 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Drawing;
+using System.Threading;
 using System.Windows.Forms;
-using WinFormsTimer = System.Windows.Forms.Timer;
 
 namespace nyxWM
 {
     /// <summary>
     /// Shows and hides the centred quick-action panel (sliders, search, terminal).
-    /// Owns the animation ticker and disposes every button window.
+    /// Buttons advance on the shared frame clock; this service owns their lifetime.
     /// All members are expected to be used from the UI thread.
     /// </summary>
     internal static class LauncherService
@@ -29,9 +28,8 @@ namespace nyxWM
 
         private static readonly List<LauncherButton> Buttons = new();
 
-        private static WinFormsTimer? _timer;
-        private static Stopwatch? _clock;
-        private static double _lastTickMs;
+        private static Action? _unsubscribe;
+        private static int _tickInFlight;
         private static Func<bool>? _isGameModeActive;
         private static bool _initialized;
         private static bool _open;
@@ -47,11 +45,6 @@ namespace nyxWM
                 return;
 
             _isGameModeActive = isGameModeActive ?? throw new ArgumentNullException(nameof(isGameModeActive));
-            _clock = Stopwatch.StartNew();
-            _lastTickMs = 0.0;
-
-            _timer = new WinFormsTimer { Interval = 15 };
-            _timer.Tick += OnTick;
 
             _initialized = true;
         }
@@ -104,10 +97,6 @@ namespace nyxWM
             float left = work.Left + (work.Width - totalWidth) / 2f;
             float centerY = work.Top + work.Height / 2f;
 
-            _clock ??= Stopwatch.StartNew();
-            _clock.Restart();
-            _lastTickMs = 0.0;
-
             for (int i = 0; i < Icons.Length; i++)
             {
                 float centerX = left + buttonSize / 2f + i * (buttonSize + gap);
@@ -135,7 +124,12 @@ namespace nyxWM
 
             _open = true;
             _closing = false;
-            _timer?.Start();
+
+            // One shared clock advances every button and posts a single repaint
+            // pass per frame on the UI thread.
+            _unsubscribe = UiAnimationHost.Subscribe(
+                dtMs => AdvanceButtons(dtMs),
+                () => RepaintButtons());
         }
 
         private static void CloseAll()
@@ -199,45 +193,103 @@ namespace nyxWM
             Buttons.Clear();
             _open = false;
             _closing = false;
-            _timer?.Stop();
+            Unsubscribe();
         }
 
-        private static void OnTick(object? sender, EventArgs e)
+        /// <summary>
+        /// Advances every button on the frame clock. Runs on the ticker thread;
+        /// onboarding and removal are marshalled back to the UI thread.
+        /// </summary>
+        private static void AdvanceButtons(double dtMs)
         {
-            if (_clock == null)
+            if (Interlocked.Exchange(ref _tickInFlight, 1) == 1)
                 return;
 
-            double now = _clock.Elapsed.TotalMilliseconds;
-            float dtMs = (float)Math.Clamp(now - _lastTickMs, 0.0, 50.0);
-            _lastTickMs = now;
-
-            if (dtMs <= 0f)
-                return;
-
-            if (IsGameModeActive())
+            try
             {
-                CloseImmediately();
+                LauncherButton[] snapshot;
+
+                lock (Buttons)
+                {
+                    snapshot = Buttons.ToArray();
+                }
+
+                foreach (LauncherButton button in snapshot)
+                    button.Advance((float)dtMs);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _tickInFlight, 0);
+            }
+        }
+
+        /// <summary>
+        /// Schedules this frame's repaint and window moves on the UI thread.
+        /// Buttons advance off-thread, so every window change is posted back:
+        /// moving a window from the ticker thread would post one marshalled
+        /// call per button per frame.
+        /// </summary>
+        private static void RepaintButtons()
+        {
+            if (Buttons.Count == 0)
                 return;
+
+            LauncherButton[] snapshot;
+
+            lock (Buttons)
+            {
+                snapshot = Buttons.ToArray();
             }
 
-            for (int i = Buttons.Count - 1; i >= 0; i--)
-            {
-                LauncherButton button = Buttons[i];
-                button.Advance(dtMs);
+            UiAnimationHost.Post(() => ApplyButtons(snapshot));
+        }
 
+        private static void ApplyButtons(LauncherButton[] snapshot)
+        {
+            for (int i = 0; i < snapshot.Length; i++)
+            {
+                LauncherButton button = snapshot[i];
+
+                if (button.IsDisposed)
+                    continue;
+
+                button.ApplyFrame();
+                InvalidateUi(button);
+
+                // Finished buttons are destroyed here, on the UI thread.
                 if (button.Finished)
-                {
-                    Buttons.RemoveAt(i);
-                    button.Close();
-                    button.Dispose();
-                }
+                    RemoveButton(button);
             }
 
             if (Buttons.Count == 0)
             {
                 _open = false;
                 _closing = false;
-                _timer?.Stop();
+                Unsubscribe();
+            }
+        }
+
+        private static void RemoveButton(LauncherButton button)
+        {
+            lock (Buttons)
+            {
+                if (!Buttons.Remove(button))
+                    return;
+            }
+
+            button.Close();
+            button.Dispose();
+        }
+
+        private static void InvalidateUi(LauncherButton button)
+        {
+            try
+            {
+                button.Invalidate();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"LauncherService: invalidate failed: {ex.Message}");
             }
         }
 
@@ -249,18 +301,25 @@ namespace nyxWM
             if (!_initialized)
                 return;
 
-            _timer?.Stop();
-            if (_timer != null)
-            {
-                _timer.Tick -= OnTick;
-                _timer.Dispose();
-            }
-
-            _timer = null;
             CloseImmediately();
             _initialized = false;
-            _clock = null;
             _isGameModeActive = null;
+        }
+
+        /// <summary>Detaches the panel from the shared frame clock.</summary>
+        private static void Unsubscribe()
+        {
+            Action? unsubscribe = Interlocked.Exchange(ref _unsubscribe, null);
+            _unsubscribe = null;
+
+            try
+            {
+                unsubscribe?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"LauncherService: unsubscribe failed: {ex.Message}");
+            }
         }
 
         private static bool IsGameModeActive()

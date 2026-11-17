@@ -1,8 +1,9 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using System.Diagnostics;
 using nyxWM;
+using nyxWM.Nx;
 
 namespace nyxWM
 {
@@ -20,6 +21,11 @@ namespace nyxWM
         internal const int HOTKEY_ID_OPEN_TERMINAL = 0x0008;
         internal const int HOTKEY_ID_LAUNCH_APP_BASE = 0x1000;
         internal const int WM_HOTKEY = 0x0312;
+
+        // The .nx surfaces (bar and widgets) are parked while the visual language
+        // is finished. Set this to true to bring them back: the documents in
+        // Res/Nx and the whole loader stay in the build either way.
+        private static readonly bool NxSurfacesEnabled = false;
 
         // Track registered hotkey IDs for proper cleanup
         private static readonly List<int> RegisteredHotkeyIds = new();
@@ -46,6 +52,30 @@ namespace nyxWM
             var mouseHook = new MouseHook(ConfigManager.Current.CameraMoveButton, ConfigManager.Current.MainMod);
             var windowManager = new WindowManager(mouseHook, rawMouse);
 
+            // Get monitor refresh rate for timer setup
+            int fallbackRefreshRate = ConfigManager.Current.FallbackRefreshRate;
+            int refreshRate = MonitorUtils.GetPrimaryMonitorRefreshRate(fallbackRefreshRate);
+            int intervalMs = Math.Max(1, (int)(1000.0 / refreshRate)); // Calculate interval for target refresh rate
+
+            // The UI frame clock drives every overlay (launcher, rofi, toasts)
+            // from one thread with one delta time. It must be running before any
+            // overlay subscribes, so it starts ahead of every service below.
+            UiAnimationHost.Start(refreshRate);
+
+            // A gesture start must lift the ticker out of its idle cadence at once.
+            windowManager.RenderActivityRequested += UiAnimationHost.RequestActivity;
+
+            // The .nx surfaces are plain data: a bar, widgets and anything else the
+            // documents declare. Shipped files live in Res/Nx; a file of the same
+            // name under %APPDATA%\nyxWM\nx overrides it without touching the app.
+            NxRuntime? nxRuntime = null;
+
+            if (NxSurfacesEnabled)
+            {
+                nxRuntime = new NxRuntime(NxDirectories());
+                nxRuntime.Start();
+            }
+
             // Notifications are suppressed while game mode (pause) is active.
             NotificationService.Initialize(() => windowManager.IsPaused);
             LauncherService.Initialize(() => windowManager.IsPaused);
@@ -63,11 +93,6 @@ namespace nyxWM
             TerminalWindowService.Initialize(
                 windowManager.InvalidateWindowCache,
                 windowManager.CenterOnFocus);
-
-            // Get monitor refresh rate for timer setup
-            int fallbackRefreshRate = ConfigManager.Current.FallbackRefreshRate;
-            int refreshRate = MonitorUtils.GetPrimaryMonitorRefreshRate(fallbackRefreshRate);
-            int intervalMs = Math.Max(1, (int)(1000.0 / refreshRate)); // Calculate interval for target refresh rate
 
             // Declare renderTimer as nullable to be assigned later
             HighResolutionTimer? renderTimer = null;
@@ -127,6 +152,8 @@ namespace nyxWM
                 LauncherService.Shutdown();
                 RofiMenuService.Shutdown();
                 TerminalWindowService.CloseAll();
+                nxRuntime?.Dispose();
+                UiAnimationHost.Stop();
                 renderTimer?.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -145,14 +172,20 @@ namespace nyxWM
             }, intervalMs);
 
             // Game mode must leave as little running as possible: the render thread
-            // (busy-spin at monitor refresh rate) and the notification ticker are
-            // both suspended until the pause is lifted.
+            // and the notification ticker are both suspended until the pause is lifted.
+            // The workspace settles first, so a pause cannot strand windows mid-offset.
             windowManager.PauseChanged += paused =>
             {
                 if (paused)
-                    renderTimer?.Stop();
+                {
+                    lastTimestamp = Stopwatch.GetTimestamp();
+                    StopRenderTimerWhenSettled(renderTimer, windowManager);
+                }
                 else
+                {
+                    lastTimestamp = Stopwatch.GetTimestamp();
                     renderTimer?.Start();
+                }
 
                 if (paused)
                     RofiMenuService.Close();
@@ -186,6 +219,11 @@ namespace nyxWM
                     ConfigManager.Current.CameraMoveButton,
                     ConfigManager.Current.MainMod);
                 windowManager.ApplyLiveConfig();
+
+                int liveRefreshRate = MonitorUtils.GetPrimaryMonitorRefreshRate(
+                    ConfigManager.Current.FallbackRefreshRate);
+                UiAnimationHost.RequestHz(liveRefreshRate);
+
                 TerminalWindowService.ApplyThemeToAll();
                 TerminalWindowService.ApplySettingsToAll();
             };
@@ -215,6 +253,8 @@ namespace nyxWM
                 LauncherService.Shutdown();
                 RofiMenuService.Shutdown();
                 TerminalWindowService.CloseAll();
+                nxRuntime?.Dispose();
+                UiAnimationHost.Stop();
                 renderTimer?.Dispose(); // Clean up timer
                 Application.Exit(); // Exit the message loop
             };
@@ -224,6 +264,48 @@ namespace nyxWM
 
             // Run the application message loop
             Application.Run();
+        }
+
+        /// <summary>
+        /// Where .nx documents are read from, lowest priority first. A user file
+        /// with the same name as a shipped one replaces it.
+        /// </summary>
+        private static string[] NxDirectories()
+        {
+            string shipped = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Res", "Nx");
+            string user = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "nyxWM",
+                "nx");
+
+            return new[] { shipped, user };
+        }
+
+        /// <summary>
+        /// Stops the cursor render timer once the workspace offset has settled.
+        /// Game mode can begin mid-gesture, so the final offsets must be applied
+        /// before the render thread goes away.
+        /// </summary>
+        private static void StopRenderTimerWhenSettled(
+            HighResolutionTimer? timer,
+            WindowManager manager)
+        {
+            if (timer == null)
+                return;
+
+            if (!manager.IsRendering)
+            {
+                timer.Stop();
+                return;
+            }
+
+            void OnSettled()
+            {
+                manager.Settled -= OnSettled;
+                timer.Stop();
+            }
+
+            manager.Settled += OnSettled;
         }
 
         /// <summary>

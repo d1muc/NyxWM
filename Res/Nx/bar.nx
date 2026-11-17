@@ -1,0 +1,178 @@
+// ---------------------------------------------------------------------------
+// bar.nx — the status bar at the top of the screen.
+//
+// Every line here is editable. Sizes may be pixels (34), percentages (50%) or
+// "fill" to take the space left over. Text in quotes may contain bindings such
+// as {time.hm} which are re-evaluated every frame.
+//
+// Hot reload: save the file and the bar rebuilds itself, no restart.
+// ---------------------------------------------------------------------------
+
+surface #bar:
+    position: top
+    anchor: center
+    width: 760
+    height: 48
+    margin: 10
+    monitor: -1      // -1 = the monitor under the cursor
+    opacity: 1
+
+    row:                                       // the bar body
+        padding: $padding
+        gap: $gap
+        radius: $radius
+        background: [$bg, $bg-soft]            // two colours make a gradient
+        border: $stroke
+        borderwidth: 1
+        cross: center
+
+        // ---- launcher ------------------------------------------------------
+        button #launcher:
+            action: rofi                       // opens the application menu
+            icon: apps
+            iconsize: 18
+            width: 34
+            height: 34
+            radius: $radius-small
+            background: $bg-hover
+            foreground: $fg
+            animate: pop
+
+        // ---- clock ---------------------------------------------------------
+        column #clock:
+            gap: 0
+            padding: 4
+
+            label #time:
+                text: "{time.hm}"
+                fontsize: 16
+                bold: true
+                foreground: $fg
+                align: left
+
+            label #date:
+                text: "{time.weekdayname}, {time.day} {time.monthname}"
+                fontsize: $size-small
+                foreground: $muted
+                align: left
+
+        divider #sep1:
+            width: 1
+            height: 26
+            background: $stroke
+            padding: 6
+
+        // ---- now playing ---------------------------------------------------
+        row #media:
+            gap: 8
+            padding: 4
+
+            box #notes:
+                icon: music
+                iconsize: 16
+                foreground: $accent
+                animate: breathe
+
+            label #track:
+                text: "{default(media.title, 'nothing playing')}"
+                fontsize: $size
+                foreground: $fg
+                align: left
+                width: 190
+
+        spacer:                                // pushes everything after it right
+
+        // ---- system load ---------------------------------------------------
+        row #load:
+            gap: 8
+            padding: 4
+            cross: center
+
+            box:
+                icon: cpu
+                iconsize: 15
+                foreground: $muted
+
+            label #cpu:
+                text: "{round(sys.cpu)}%"
+                fontsize: $size-small
+                foreground: $muted
+                align: left
+                width: 34
+
+            bar #cpubar:
+                value: "{sys.cpu}"
+                max: 100
+                width: 54
+                height: 6
+                radius: 3
+                background: $bg-hover
+                fill: $accent
+                animate: sweep
+
+        divider #sep2:
+            width: 1
+            height: 26
+            background: $stroke
+            padding: 6
+
+        // ---- windows -------------------------------------------------------
+        row #windows:
+            gap: 6
+            padding: 4
+            cross: center
+
+            box:
+                icon: window
+                iconsize: 15
+                foreground: $muted
+
+            label #wincount:
+                text: "{win.count}"
+                fontsize: $size-small
+                foreground: $muted
+                align: left
+                width: 22
+
+        // ---- battery -------------------------------------------------------
+        row #power:
+            gap: 6
+            padding: 4
+            cross: center
+            visible: "{sys.battery >= 0}"      // a desktop with no battery hides this
+
+            box:
+                icon: battery
+                iconsize: 15
+                foreground: $ok
+
+            label #battery:
+                text: "{sys.battery}%"
+                fontsize: $size-small
+                foreground: $muted
+                align: left
+
+        // ---- buttons -------------------------------------------------------
+        button #settings:
+            action: settings
+            icon: settings
+            iconsize: 16
+            width: 32
+            height: 32
+            radius: $radius-small
+            background: $bg-hover
+            foreground: $muted
+            tooltip: "nyxWM settings"
+            animate: pop
+
+        button #exit:
+            action: exit
+            icon: power
+            iconsize: 16
+            width: 32
+            height: 32
+            radius: $radius-small
+            background: $bg-hover
+            foreground: $bad
+            tooltip: "Quit nyxWM"
+            animate: pop

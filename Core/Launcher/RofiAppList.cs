@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -39,6 +39,9 @@ namespace nyxWM
         private int _selectedIndex = -1;
         private int _topIndex;
         private int _hoverIndex = -1;
+
+        /// <summary>True while the selection pill is still gliding.</summary>
+        internal bool HasActiveAnimation { get; private set; }
 
         private float _highlightTop;
         private float _highlightHeight;
@@ -149,12 +152,36 @@ namespace nyxWM
         /// <summary>
         /// Eases the selection pill toward the selected row.
         /// </summary>
-        internal void Advance(float dtMs)
+        /// <summary>
+        /// Advances the selection pill on the frame clock and reports whether it
+        /// is still moving. Runs on the ticker thread: the control invalidates
+        /// only through <see cref="FlushFrame"/>, which the window calls on the
+        /// UI thread.
+        /// </summary>
+        internal RenderTicker.TickResult AdvanceFrame(double dtMs)
+        {
+            bool moved = Advance((float)dtMs);
+
+            HasActiveAnimation = moved;
+
+            if (_items.Count == 0 || _selectedIndex < 0)
+                return RenderTicker.TickResult.Idle;
+
+            return moved ? RenderTicker.TickResult.Active : RenderTicker.TickResult.Idle;
+        }
+
+        /// <summary>Repaints after <see cref="AdvanceFrame"/> changed the pill.</summary>
+        internal void FlushFrame()
+        {
+            Invalidate();
+        }
+
+        private bool Advance(float dtMs)
         {
             if (_items.Count == 0 || _selectedIndex < 0)
             {
                 _highlightReady = false;
-                return;
+                return false;
             }
 
             float targetTop = (_selectedIndex - _topIndex) * ItemHeight + 2f * _scale;
@@ -169,10 +196,10 @@ namespace nyxWM
                     _highlightTop = targetTop;
                     _highlightHeight = targetHeight;
                     _highlightReady = true;
-                    Invalidate();
+                    return true;
                 }
 
-                return;
+                return false;
             }
 
             if (!_highlightReady)
@@ -180,8 +207,7 @@ namespace nyxWM
                 _highlightTop = targetTop;
                 _highlightHeight = targetHeight;
                 _highlightReady = true;
-                Invalidate();
-                return;
+                return true;
             }
 
             float factor = 1f - MathF.Exp(-SelectionSmoothingPerSecond * dtMs / 1000f);
@@ -200,8 +226,7 @@ namespace nyxWM
             _highlightTop = appliedTop;
             _highlightHeight = appliedHeight;
 
-            if (moved)
-                Invalidate();
+            return moved;
         }
 
         private void SnapHighlight()

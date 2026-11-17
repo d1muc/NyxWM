@@ -1,12 +1,12 @@
-using System;
+﻿using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
-using WinFormsTimer = System.Windows.Forms.Timer;
 
 namespace nyxWM
 {
@@ -51,8 +51,8 @@ namespace nyxWM
         private readonly Font _badgeFont;
         private readonly TextBox _search;
         private readonly RofiAppList _list;
-        private readonly WinFormsTimer _timer;
-        private readonly Stopwatch _clock = Stopwatch.StartNew();
+        private Action? _unsubscribe;
+        private int _frameInFlight;
         private readonly Color _fieldColor;
         private readonly bool _glass;
         private readonly bool _animations;
@@ -63,7 +63,6 @@ namespace nyxWM
         private RectangleF _footerRect;
 
         private Bitmap? _backdrop;
-        private double _lastTickMs;
         private float _elapsedMs;
         private float _closeElapsedMs;
         private bool _closing;
@@ -144,10 +143,7 @@ namespace nyxWM
 
             ApplyFilter();
             ApplyLayout(_animations ? EntryStartScale : 1f, 0f);
-            ApplyRoundedRegion();
 
-            _timer = new WinFormsTimer { Interval = 15 };
-            _timer.Tick += OnTick;
         }
 
         internal bool IsClosing => _closing;
@@ -173,15 +169,18 @@ namespace nyxWM
         {
             base.OnShown(e);
 
-            _backdrop = _glass ? CaptureBackdrop() : null;
+            // The entry animation runs before the window is shown on the UI thread.
+            UiAnimationHost.RequestActivity();
 
-            _clock.Restart();
-            _lastTickMs = 0.0;
+            _backdrop = _glass ? CaptureBackdrop() : null;
 
             if (!_animations)
                 _elapsedMs = EntryDurationMs;
 
-            _timer.Start();
+            // The shared frame clock drives the entry, hover and exit phases.
+            _unsubscribe = UiAnimationHost.Subscribe(
+                dtMs => AdvanceFrame(dtMs),
+                () => RepaintIfAnimated());
 
             Activate();
             SetForegroundWindow(Handle);
@@ -580,25 +579,13 @@ namespace nyxWM
 
             if (!_animations)
             {
-                _timer.Stop();
+                Unsubscribe();
                 Close();
                 return;
             }
 
             _closing = true;
             _closeElapsedMs = 0f;
-        }
-
-        private void OnTick(object? sender, EventArgs e)
-        {
-            double now = _clock.Elapsed.TotalMilliseconds;
-            float dtMs = (float)Math.Clamp(now - _lastTickMs, 0.0, 50.0);
-            _lastTickMs = now;
-
-            if (dtMs <= 0f)
-                return;
-
-            Advance(dtMs);
         }
 
         private void Advance(float dtMs)
@@ -633,17 +620,15 @@ namespace nyxWM
                   + easedClose * ExitSlideDip * _scale
                 : 0f;
 
-            ApplyLayout(visual, slide);
-            _list.Advance(dtMs);
-
-            // Past the entry animation the window content is static; repainting
-            // the blurred backdrop every tick would only burn CPU.
+            // Past the entry animation the window content is static; the list
+            // itself repaints only while the selection pill is still moving.
+            // Every layout change is posted to the UI thread.
             if (_closing || entryProgress < 1f)
-                Invalidate();
+                UiAnimationHost.Post(() => ApplyFrame(visual, slide));
 
             if (_closing && closeProgress >= 1f)
             {
-                _timer.Stop();
+                Unsubscribe();
                 Close();
             }
         }
@@ -657,7 +642,10 @@ namespace nyxWM
 
             var bounds = new Rectangle(left, top, width, height);
             if (Bounds != bounds)
+            {
                 Bounds = bounds;
+                UiAnimationHost.RequestActivity();
+            }
 
             float s = _scale * visualScale;
             float pad = PaddingDip * s;
@@ -775,15 +763,18 @@ namespace nyxWM
         protected override void OnSizeChanged(EventArgs e)
         {
             base.OnSizeChanged(e);
-            ApplyRoundedRegion();
+
+            // The window region must be re-cut whenever the card scales, but the
+            // handle only exists after the window is created.
+            if (IsHandleCreated)
+                ApplyRoundedRegion();
         }
 
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
-                _timer?.Stop();
-                _timer?.Dispose();
+                Unsubscribe();
                 _searchFont.Dispose();
                 _badgeFont.Dispose();
                 _backdrop?.Dispose();
@@ -791,6 +782,72 @@ namespace nyxWM
             }
 
             base.Dispose(disposing);
+        }
+
+        /// <summary>
+        /// Advances the entry, hover and exit phases on the frame clock. Runs on
+        /// the ticker thread, so window changes are posted back to the UI thread.
+        /// </summary>
+        private RenderTicker.TickResult AdvanceFrame(double dtMs)
+        {
+            if (Interlocked.Exchange(ref _frameInFlight, 1) == 1)
+                return RenderTicker.TickResult.Active;
+
+            try
+            {
+                Advance((float)dtMs);
+
+                if (_closing || _elapsedMs < EntryDurationMs)
+                    return RenderTicker.TickResult.Active;
+
+                return _list.AdvanceFrame(dtMs);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _frameInFlight, 0);
+            }
+        }
+
+        /// <summary>Repaints while the entry or exit animation is still running.</summary>
+        private void RepaintIfAnimated()
+        {
+            if (IsDisposed)
+                return;
+
+            // The selection pill keeps moving after the entry animation ends.
+            if (!_closing && _elapsedMs >= EntryDurationMs && !_list.HasActiveAnimation)
+                return;
+
+            Invalidate();
+        }
+
+        /// <summary>
+        /// Applies the frame's window bounds and child layout on the UI thread.
+        /// </summary>
+        private void ApplyFrame(float visualScale, float slide)
+        {
+            if (IsDisposed)
+                return;
+
+            ApplyLayout(visualScale, slide);
+            _list.FlushFrame();
+            Invalidate();
+        }
+
+        /// <summary>Detaches this window from the shared frame clock.</summary>
+        private void Unsubscribe()
+        {
+            Action? unsubscribe = Interlocked.Exchange(ref _unsubscribe, null);
+            _unsubscribe = null;
+
+            try
+            {
+                unsubscribe?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"RofiMenuWindow: unsubscribe failed: {ex.Message}");
+            }
         }
 
         private static float EaseOutCubic(float progress)

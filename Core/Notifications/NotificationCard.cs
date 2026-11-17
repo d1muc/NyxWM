@@ -1,6 +1,7 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Windows.Forms;
 
@@ -24,7 +25,6 @@ namespace nyxWM
         private const int WS_EX_TOOLWINDOW = 0x00000080;
         private const int WS_EX_TRANSPARENT = 0x00000020;
         private const int WS_EX_NOACTIVATE = 0x08000000;
-
         private readonly float _scale;
         private readonly string _title;
         private readonly string _body;
@@ -40,6 +40,10 @@ namespace nyxWM
         private bool _closing;
         private float _closeElapsedMs;
         private float _opacityAtClose = 1f;
+
+        private float _opacity = 1f;
+        private Bitmap? _buffer;
+        private int _renderStamp = -1;
 
         internal double AgeMs { get; private set; }
         internal double LifetimeMs { get; }
@@ -92,9 +96,7 @@ namespace nyxWM
             _y = startY;
 
             Location = new Point((int)MathF.Round(_x), (int)MathF.Round(_y));
-            Opacity = _animations ? 0.0 : _windowOpacity;
-
-            ApplyRoundedRegion();
+            _opacity = _animations ? 0f : _windowOpacity;
         }
 
         internal static Size Measure(float scale)
@@ -109,7 +111,7 @@ namespace nyxWM
             get
             {
                 CreateParams parameters = base.CreateParams;
-                parameters.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
+                parameters.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | LayeredWindow.WS_EX_LAYERED;
                 return parameters;
             }
         }
@@ -127,9 +129,9 @@ namespace nyxWM
             {
                 _closeElapsedMs += dtMs;
                 float closeProgress = Math.Clamp(_closeElapsedMs / FadeOutMs, 0f, 1f);
-                Opacity = _animations
+                _opacity = _animations
                     ? _opacityAtClose * (1f - closeProgress)
-                    : 0.0;
+                    : 0f;
             }
             else
             {
@@ -137,7 +139,7 @@ namespace nyxWM
                     ? Math.Clamp((float)(AgeMs / FadeInMs), 0f, 1f)
                     : 1f;
                 float eased = 1f - MathF.Pow(1f - entryProgress, 3f);
-                Opacity = eased * _windowOpacity;
+                _opacity = eased * _windowOpacity;
             }
 
             if (_animations)
@@ -157,8 +159,27 @@ namespace nyxWM
                 _y = TargetY;
             }
 
-            Location = new Point((int)MathF.Round(_x), (int)MathF.Round(_y));
-            Invalidate();
+            // Window placement must stay on the UI thread, so a subscriber that
+            // advances off-thread posts the move to the host instead.
+            int left = (int)MathF.Round(_x);
+            int top = (int)MathF.Round(_y);
+
+            if (!InvokeRequired)
+            {
+                Location = new Point(left, top);
+                ApplyLayered();
+            }
+            else
+            {
+                UiAnimationHost.Post(() =>
+                {
+                    if (IsDisposed)
+                        return;
+
+                    Location = new Point(left, top);
+                    ApplyLayered();
+                });
+            }
         }
 
         internal void BeginClose()
@@ -168,20 +189,97 @@ namespace nyxWM
 
             _closing = true;
             _closeElapsedMs = 0f;
-            _opacityAtClose = (float)Opacity;
+            _opacityAtClose = _opacity;
 
             if (!_animations)
             {
                 _closeElapsedMs = FadeOutMs;
-                Opacity = 0.0;
+                _opacity = 0f;
             }
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            ApplyLayered();
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            // The window's pixels come from UpdateLayeredWindow, never from GDI
+            // background painting: erasing here would punch an opaque hole in it.
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            base.OnPaint(e);
+            ApplyLayered();
+        }
 
-            Graphics graphics = e.Graphics;
+        /// <summary>Recreates the ARGB buffer when the window size changed.</summary>
+        private void EnsureBufferSize()
+        {
+            if (Width <= 0 || Height <= 0)
+                return;
+
+            if (_buffer != null && _buffer.Width == Width && _buffer.Height == Height)
+                return;
+
+            Bitmap? previous = _buffer;
+            _buffer = new Bitmap(Width, Height, PixelFormat.Format32bppPArgb);
+            previous?.Dispose();
+            _renderStamp = -1;
+        }
+
+        /// <summary>Paints the buffer only when the visible content actually changed.</summary>
+        private void RenderIfNeeded()
+        {
+            if (_buffer == null)
+                return;
+
+            int stamp = RenderStamp();
+
+            if (stamp == _renderStamp)
+                return;
+
+            _renderStamp = stamp;
+
+            using Graphics graphics = Graphics.FromImage(_buffer);
+            Render(graphics);
+        }
+
+        /// <summary>
+        /// A cheap fingerprint of everything that changes the pixels: size and the
+        /// lifetime bar, which is the only part that moves between frames.
+        /// </summary>
+        private int RenderStamp()
+        {
+            int stamp = Width * 397 + Height;
+
+            if (_closing)
+                return stamp * 1009 + 1;
+
+            double progress = Math.Clamp(1.0 - AgeMs / Math.Max(1.0, LifetimeMs), 0.0, 1.0);
+            return stamp * 1009 + 2 + (int)Math.Round(progress * 400.0);
+        }
+
+        /// <summary>Pushes the buffer to the window with the current fade alpha.</summary>
+        private void ApplyLayered()
+        {
+            if (IsDisposed)
+                return;
+
+            EnsureBufferSize();
+            RenderIfNeeded();
+
+            if (_buffer == null)
+                return;
+
+            LayeredWindow.Apply(Handle, _buffer, Left, Top, _opacity);
+        }
+
+        private void Render(Graphics graphics)
+        {
+            graphics.Clear(Color.Transparent);
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
             graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
             graphics.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
@@ -327,6 +425,8 @@ namespace nyxWM
             {
                 _titleFont.Dispose();
                 _bodyFont.Dispose();
+                _buffer?.Dispose();
+                _buffer = null;
             }
 
             base.Dispose(disposing);

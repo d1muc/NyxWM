@@ -1,16 +1,15 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Drawing;
+using System.Threading;
 using System.Windows.Forms;
-using WinFormsTimer = System.Windows.Forms.Timer;
 
 namespace nyxWM
 {
     /// <summary>
-    /// Manages notification cards: lifetime, stacking, animation ticks and
-    /// language-change detection. All members are expected to be used from
-    /// the UI thread.
+    /// Manages notification cards: lifetime, stacking, frame ticks and
+    /// language-change detection. Cards advance on the shared frame clock.
+    /// All members are expected to be used from the UI thread.
     /// </summary>
     internal static class NotificationService
     {
@@ -24,9 +23,8 @@ namespace nyxWM
 
         private static readonly List<NotificationCard> Cards = new();
 
-        private static WinFormsTimer? _timer;
-        private static Stopwatch? _clock;
-        private static double _lastTickMs;
+        private static Action? _unsubscribe;
+        private static int _tickInFlight;
         private static double _languagePollAccumMs;
         private static float _startupDelayMs;
         private static Func<bool>? _isGameModeActive;
@@ -49,39 +47,42 @@ namespace nyxWM
 
             _isGameModeActive = isGameModeActive ?? throw new ArgumentNullException(nameof(isGameModeActive));
             _languageWatcher = new KeyboardLanguageWatcher();
-            _clock = Stopwatch.StartNew();
-            _lastTickMs = 0.0;
             _languagePollAccumMs = 0.0;
             _startupDelayMs = StartupDelayMs;
             _position = ResolvePosition();
             _dpiScale = GetDpiScale();
 
-            _timer = new WinFormsTimer { Interval = 15 };
-            _timer.Tick += OnTick;
-            _timer.Start();
+            _unsubscribe = UiAnimationHost.Subscribe(
+                dtMs => AdvanceNotifications(dtMs),
+                () => { });
 
             _initialized = true;
         }
 
         /// <summary>
-        /// Stops or resumes the notification ticker. Game mode suspends it so the
-        /// UI thread is not woken every 15 ms while a game is running.
+        /// Suspends lifetime counting while game mode is active: cards are dropped
+        /// and the frame clock stops seeing this service as a subscriber.
         /// </summary>
         internal static void SetSuspended(bool suspended)
         {
-            if (!_initialized || _timer == null)
+            if (!_initialized)
                 return;
 
             if (suspended)
             {
                 CloseAllCards();
-                _timer.Stop();
+                Unsubscribe();
                 return;
             }
 
             _startupDelayMs = 0f;
-            _lastTickMs = _clock?.Elapsed.TotalMilliseconds ?? 0.0;
-            _timer.Start();
+
+            if (_unsubscribe == null)
+            {
+                _unsubscribe = UiAnimationHost.Subscribe(
+                    dtMs => AdvanceNotifications(dtMs),
+                    () => { });
+            }
         }
 
         /// <summary>
@@ -90,7 +91,7 @@ namespace nyxWM
         /// </summary>
         internal static void Show(string title, string body)
         {
-            if (!_initialized || _clock == null)
+            if (!_initialized)
                 return;
 
             NotificationSettings? settings = ConfigManager.Current.Notifications;
@@ -132,10 +133,16 @@ namespace nyxWM
                 theme);
 
             Cards.Insert(0, card);
+
+            // Cards are created either on the UI thread or from a posted frame
+            // callback, so the window handle is always available here.
             card.Show();
             Reflow();
 
             TrimExcessCards();
+
+            // A card that appears while the workspace idles must animate at once.
+            UiAnimationHost.RequestActivity();
         }
 
         /// <summary>
@@ -146,84 +153,114 @@ namespace nyxWM
             if (!_initialized)
                 return;
 
-            _timer?.Stop();
-            if (_timer != null)
-            {
-                _timer.Tick -= OnTick;
-                _timer.Dispose();
-            }
-
-            _timer = null;
+            Unsubscribe();
             CloseAllCards();
             _initialized = false;
-            _clock = null;
             _languageWatcher = null;
             _isGameModeActive = null;
         }
 
-        private static void OnTick(object? sender, EventArgs e)
+        /// <summary>
+        /// Advances card lifetimes and language polling on the frame clock.
+        /// Returns Active while a card is still animating so the host keeps the
+        /// full cadence; repaints are posted to the UI thread separately.
+        /// </summary>
+        private static RenderTicker.TickResult AdvanceNotifications(double dtMs)
         {
-            if (_clock == null)
-                return;
+            if (Interlocked.Exchange(ref _tickInFlight, 1) == 1)
+                return RenderTicker.TickResult.Idle;
 
-            double now = _clock.Elapsed.TotalMilliseconds;
-            float dtMs = (float)Math.Clamp(now - _lastTickMs, 0.0, 50.0);
-            _lastTickMs = now;
-
-            if (dtMs <= 0f)
-                return;
-
-            if (IsGameModeActive())
+            try
             {
-                _startupDelayMs = 0f;
-                CloseAllCards();
-                return;
-            }
+                if (dtMs <= 0.0)
+                    return RenderTicker.TickResult.Idle;
 
-            if (_startupDelayMs > 0f)
-            {
-                _startupDelayMs -= dtMs;
-                if (_startupDelayMs <= 0f)
+                if (IsGameModeActive())
                 {
-                    Show("nyxWM", "Running and active");
-                }
-            }
-
-            _languagePollAccumMs += dtMs;
-            if (_languagePollAccumMs >= LanguagePollIntervalMs)
-            {
-                _languagePollAccumMs = 0.0;
-                string? language = _languageWatcher?.Poll();
-                if (language != null)
-                {
-                    Show("Language changed", language);
-                    LayoutSwitched?.Invoke();
-                }
-            }
-
-            if (Cards.Count == 0)
-                return;
-
-            for (int i = Cards.Count - 1; i >= 0; i--)
-            {
-                NotificationCard card = Cards[i];
-
-                if (!card.IsClosing && card.AgeMs >= card.LifetimeMs)
-                {
-                    card.BeginClose();
+                    _startupDelayMs = 0f;
+                    UiAnimationHost.Post(CloseAllCards);
+                    return RenderTicker.TickResult.Idle;
                 }
 
-                card.Advance(dtMs);
-
-                if (card.Finished)
+                if (_startupDelayMs > 0f)
                 {
-                    Cards.RemoveAt(i);
-                    card.Close();
-                    card.Dispose();
+                    _startupDelayMs -= (float)dtMs;
+                    if (_startupDelayMs <= 0f)
+                    {
+                        UiAnimationHost.Post(() => Show("nyxWM", "Running and active"));
+                    }
                 }
-            }
 
-            Reflow();
+                _languagePollAccumMs += dtMs;
+                if (_languagePollAccumMs >= LanguagePollIntervalMs)
+                {
+                    _languagePollAccumMs = 0.0;
+                    string? language = _languageWatcher?.Poll();
+                    if (language != null)
+                    {
+                        UiAnimationHost.Post(() => Show("Language changed", language));
+                        LayoutSwitched?.Invoke();
+                    }
+                }
+
+                NotificationCard[] snapshot = Cards.ToArray();
+                if (snapshot.Length == 0)
+                    return RenderTicker.TickResult.Idle;
+
+                bool anyActive = false;
+
+                foreach (NotificationCard card in snapshot)
+                {
+                    if (card.IsDisposed)
+                        continue;
+
+                    if (!card.IsClosing && card.AgeMs >= card.LifetimeMs)
+                    {
+                        card.BeginClose();
+                    }
+
+                    // The card owns its window, so a closing card is disposed by
+                    // the UI thread once it has faded out.
+                    card.Advance((float)dtMs);
+
+                    if (card.Finished)
+                        UiAnimationHost.Post(() => RemoveCard(card));
+
+                    if (!card.Finished)
+                    {
+                        anyActive = true;
+                    }
+                }
+
+                return anyActive
+                    ? RenderTicker.TickResult.Active
+                    : RenderTicker.TickResult.Idle;
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _tickInFlight, 0);
+            }
+        }
+
+        /// <summary>
+        /// Disposes a card that finished its exit fade, then re-stacks the rest.
+        /// Runs on the UI thread.
+        /// </summary>
+        private static void RemoveCard(NotificationCard card)
+        {
+            try
+            {
+                if (!Cards.Remove(card))
+                    return;
+
+                card.Close();
+                card.Dispose();
+                Reflow();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"NotificationService: card removal failed: {ex.Message}");
+            }
         }
 
         private static void Reflow()
@@ -316,6 +353,22 @@ namespace nyxWM
             }
 
             Cards.Clear();
+        }
+
+        /// <summary>Detaches this service from the shared frame clock.</summary>
+        private static void Unsubscribe()
+        {
+            Action? unsubscribe = Interlocked.Exchange(ref _unsubscribe, null);
+            _unsubscribe = null;
+
+            try
+            {
+                unsubscribe?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"NotificationService: unsubscribe failed: {ex.Message}");
+            }
         }
 
         private static bool IsGameModeActive()

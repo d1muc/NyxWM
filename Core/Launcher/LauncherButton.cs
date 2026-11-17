@@ -1,6 +1,7 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Windows.Forms;
 
 namespace nyxWM
@@ -42,6 +43,10 @@ namespace nyxWM
 
         private PointF _center;
 
+        private float _opacity = 1f;
+        private Bitmap? _buffer;
+        private int _renderStamp = -1;
+
         internal LauncherButton(
             LauncherIcon icon,
             float scale,
@@ -73,9 +78,7 @@ namespace nyxWM
 
             int initialSize = Math.Max(1, (int)MathF.Round(BaseSize * _scale * EntryStartScale));
             Size = new Size(initialSize, initialSize);
-            Opacity = _animations ? 0.0 : _windowOpacity;
-
-            ApplyRoundedRegion();
+            _opacity = _animations ? 0f : _windowOpacity;
         }
 
         internal bool Finished => _closing && _closeElapsedMs >= _exitDelayMs + ExitDurationMs;
@@ -85,7 +88,7 @@ namespace nyxWM
             get
             {
                 CreateParams parameters = base.CreateParams;
-                parameters.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+                parameters.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | LayeredWindow.WS_EX_LAYERED;
                 return parameters;
             }
         }
@@ -136,7 +139,7 @@ namespace nyxWM
                 ? easedEntry * (1f - easedClose)
                 : easedEntry;
 
-            Opacity = Math.Clamp(opacity * _windowOpacity, 0.0, 1.0);
+            _opacity = Math.Clamp(opacity * _windowOpacity, 0f, 1f);
 
             float entryScale = _animations
                 ? EntryStartScale + (1f - EntryStartScale) * easedEntry
@@ -145,9 +148,17 @@ namespace nyxWM
             _visualScale = entryScale
                            * (1f - closeProgress)
                            * (1f + HoverScale * _hoverAmount);
+        }
 
+        /// <summary>
+        /// Applies the frame's scale, bounds, opacity and repaint. Must run on the
+        /// UI thread: <see cref="Advance"/> only computes, this method touches the
+        /// window.
+        /// </summary>
+        internal void ApplyFrame()
+        {
             ApplyLayout();
-            Invalidate();
+            ApplyLayered();
         }
 
         internal void BeginClose(float delayMs)
@@ -162,14 +173,22 @@ namespace nyxWM
             if (!_animations)
             {
                 _closeElapsedMs = _exitDelayMs + ExitDurationMs;
-                Opacity = 0.0;
+                _opacity = 0f;
             }
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            ApplyLayered();
         }
 
         protected override void OnSizeChanged(EventArgs e)
         {
             base.OnSizeChanged(e);
-            ApplyRoundedRegion();
+
+            if (IsHandleCreated)
+                ApplyLayered();
         }
 
         protected override void OnMouseEnter(EventArgs e)
@@ -194,11 +213,78 @@ namespace nyxWM
             }
         }
 
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            // The window's pixels come from UpdateLayeredWindow, never from GDI
+            // background painting: erasing here would punch an opaque hole in it.
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
-            base.OnPaint(e);
+            ApplyLayered();
+        }
 
-            Graphics graphics = e.Graphics;
+        /// <summary>Recreates the ARGB buffer when the window size changed.</summary>
+        private void EnsureBufferSize()
+        {
+            if (Width <= 0 || Height <= 0)
+                return;
+
+            if (_buffer != null && _buffer.Width == Width && _buffer.Height == Height)
+                return;
+
+            Bitmap? previous = _buffer;
+            _buffer = new Bitmap(Width, Height, PixelFormat.Format32bppPArgb);
+            previous?.Dispose();
+            _renderStamp = -1;
+        }
+
+        /// <summary>Paints the buffer only when the visible content actually changed.</summary>
+        private void RenderIfNeeded()
+        {
+            if (_buffer == null)
+                return;
+
+            int stamp = RenderStamp();
+
+            if (stamp == _renderStamp)
+                return;
+
+            _renderStamp = stamp;
+
+            using Graphics graphics = Graphics.FromImage(_buffer);
+            Render(graphics);
+        }
+
+        /// <summary>
+        /// Fingerprint of everything that changes the pixels: size, scale and the
+        /// hover glow. The buffer is only repainted when this changes.
+        /// </summary>
+        private int RenderStamp()
+        {
+            int hover = (int)Math.Round(Math.Clamp(_hoverAmount, 0f, 1f) * 120f);
+            int visual = (int)Math.Round(Math.Clamp(_visualScale, 0f, 3f) * 400f);
+            return (Width * 397 + Height) * 1009 + hover * 31 + visual;
+        }
+
+        /// <summary>Pushes the buffer to the window with the current fade alpha.</summary>
+        private void ApplyLayered()
+        {
+            if (IsDisposed || !IsHandleCreated)
+                return;
+
+            EnsureBufferSize();
+            RenderIfNeeded();
+
+            if (_buffer == null)
+                return;
+
+            LayeredWindow.Apply(Handle, _buffer, Left, Top, _opacity);
+        }
+
+        private void Render(Graphics graphics)
+        {
+            graphics.Clear(Color.Transparent);
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
             graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
@@ -375,20 +461,6 @@ namespace nyxWM
                 (int)MathF.Round(_center.Y - size / 2f));
         }
 
-        private void ApplyRoundedRegion()
-        {
-            if (Width <= 0 || Height <= 0)
-                return;
-
-            using GraphicsPath path = CreateRoundedPath(
-                new RectangleF(0f, 0f, Width, Height),
-                Width * _cornerRatio);
-
-            Region? previous = Region;
-            Region = new Region(path);
-            previous?.Dispose();
-        }
-
         private static float EaseOutCubic(float progress)
         {
             float inverse = 1f - Math.Clamp(progress, 0f, 1f);
@@ -412,6 +484,17 @@ namespace nyxWM
             path.AddArc(rect.Left, rect.Bottom - diameter, diameter, diameter, 90f, 90f);
             path.CloseFigure();
             return path;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _buffer?.Dispose();
+                _buffer = null;
+            }
+
+            base.Dispose(disposing);
         }
     }
 }

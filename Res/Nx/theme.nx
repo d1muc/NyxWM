@@ -1,0 +1,107 @@
+// ---------------------------------------------------------------------------
+// theme.nx — colours, sizes and animations shared by every surface.
+//
+// Tokens declared here are visible in every other .nx file: write "$accent" in
+// bar.nx and it resolves to the value below. Change it once, everything follows.
+//
+// This file declares no surface of its own; it is the palette.
+// ---------------------------------------------------------------------------
+
+// ---- colours --------------------------------------------------------------
+accent:        #7aa2f7   // primary highlight
+accent-soft:   #4d7aa2f7 // same colour at 30% alpha
+fg:            #e6e9ef   // main text
+muted:         #99a3b3   // secondary text
+ok:            #9ece6a
+warn:          #e0af68
+bad:           #f7768e
+
+// Surfaces are translucent so the desktop shows through.
+bg:            #cc12151c
+bg-soft:       #991b1f2a
+bg-hover:      #26ffffff
+stroke:        #1fffffff
+
+// ---- geometry -------------------------------------------------------------
+radius:        14
+radius-small:  10
+gap:           10
+padding:       8
+font:          "Segoe UI"
+size:          13
+size-small:    11
+
+// ---- animations -----------------------------------------------------------
+// An animation is a list of keyframes. Offsets are percentages of the duration
+// and may be written "0% {", "100% {". Properties interpolate between frames.
+
+// Plays once when the element appears.
+animation pop:
+    duration: 200ms
+    easing: back-out
+    {
+        opacity: 0
+        scale: 0.7
+    }
+    100% {
+        opacity: 1
+        scale: 1
+    }
+
+// A gentle idle breathing, used to make a live indicator feel alive.
+animation breathe:
+    duration: 1600ms
+    loop: true
+    alternate: true
+    easing: sine
+    {
+        opacity: 0.55
+        scale: 0.9
+    }
+    100% {
+        opacity: 1
+        scale: 1.1
+    }
+
+// Slides a widget in from the left.
+animation slide-in:
+    duration: 260ms
+    easing: ease-out
+    {
+        opacity: 0
+        offsetx: -18
+    }
+    100% {
+        opacity: 1
+        offsetx: 0
+    }
+
+// A colour cross-fade, for an element that should glow.
+animation glow:
+    duration: 1200ms
+    loop: true
+    alternate: true
+    easing: sine
+    {
+        background: #227aa2f7
+        foreground: $muted
+    }
+    100% {
+        background: #667aa2f7
+        foreground: $fg
+    }
+
+// A slow sweep for progress bars.
+animation sweep:
+    duration: 2400ms
+    loop: true
+    easing: linear
+    {
+        opacity: 0.35
+    }
+    50% {
+        opacity: 1
+    }
+    100% {
+        opacity: 0.35
+    }
