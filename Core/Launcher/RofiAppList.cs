@@ -61,6 +61,11 @@ namespace nyxWM
         internal event Action? PinsChanged;
         internal event Action? Invalidated;
 
+        /// <summary>Increments whenever the visible state changes (highlight, hover, scroll, items).</summary>
+        internal int RenderVersion { get; private set; }
+
+        private void BumpVersion() => RenderVersion++;
+
         internal int SelectedIndex => _selectedIndex;
         internal bool HasActiveAnimation { get; private set; }
         internal bool IsPinMenuOpen => _pinMenu.Visible;
@@ -109,6 +114,7 @@ namespace nyxWM
             _hoverIndex = -1;
             SnapHighlight();
             EnsureSelectionVisible();
+            BumpVersion();
             Invalidated?.Invoke();
         }
 
@@ -155,6 +161,7 @@ namespace nyxWM
 
         internal void FlushFrame()
         {
+            BumpVersion();
             Invalidated?.Invoke();
         }
 
@@ -207,6 +214,9 @@ namespace nyxWM
 
             _highlightTop = appliedTop;
             _highlightHeight = appliedHeight;
+
+            if (moved)
+                BumpVersion();
 
             return moved;
         }
@@ -282,6 +292,7 @@ namespace nyxWM
                 return false;
 
             _hoverIndex = index;
+            BumpVersion();
             return true;
         }
 
@@ -291,6 +302,7 @@ namespace nyxWM
                 return false;
 
             _hoverIndex = -1;
+            BumpVersion();
             return true;
         }
 
@@ -308,6 +320,7 @@ namespace nyxWM
                 if (!_smooth)
                     SnapHighlight();
 
+                BumpVersion();
                 Invalidated?.Invoke();
                 ShowPinMenu(_items[index], screenLocation);
                 return;
@@ -322,6 +335,7 @@ namespace nyxWM
             if (!_smooth)
                 SnapHighlight();
 
+            BumpVersion();
             Invalidated?.Invoke();
         }
 

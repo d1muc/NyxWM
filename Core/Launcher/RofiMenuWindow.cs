@@ -138,7 +138,7 @@ namespace nyxWM
             _list = new RofiAppList(_theme, _scale);
             _list.ItemActivated += OnItemActivated;
             _list.PinsChanged += () => ApplyFilter(preserveSelection: true);
-            _list.Invalidated += () => Invalidate();
+            _list.Invalidated += () => ApplyLayered();
 
             ApplyFilter();
             ApplyScaledLayout(_visualScale, _animations ? EntrySlideDip * _scale : 0f);
@@ -246,7 +246,7 @@ namespace nyxWM
 
                 case WM_MOUSELEAVE:
                     if (_list.ClearHover())
-                        Invalidate();
+                        ApplyLayered();
                     return;
 
                 case WM_MOUSEACTIVATE:
@@ -316,6 +316,7 @@ namespace nyxWM
                     else if (_caretIndex >0)
                         _caretIndex--;
                     if (!shift) _selectionLength =0;
+                    ApplyLayered();
                     return;
 
                 case Keys.Right:
@@ -324,21 +325,25 @@ namespace nyxWM
                     else if (_caretIndex < _searchText.Length)
                         _caretIndex++;
                     if (!shift) _selectionLength =0;
+                    ApplyLayered();
                     return;
 
                 case Keys.Home:
                     _caretIndex =0;
                     if (!shift) _selectionLength =0;
+                    ApplyLayered();
                     return;
 
                 case Keys.End:
                     _caretIndex = _searchText.Length;
                     if (!shift) _selectionLength =0;
+                    ApplyLayered();
                     return;
 
                 case Keys.A when ctrl:
                     _caretIndex =0;
                     _selectionLength = _searchText.Length;
+                    ApplyLayered();
                     return;
 
                 case Keys.C when ctrl:
@@ -434,12 +439,12 @@ namespace nyxWM
         {
             if (IsOutsideListArea(x, y))
             {
-                if (_list.ClearHover()) Invalidate();
+                if (_list.ClearHover()) ApplyLayered();
                 return;
             }
 
             int listY = MapToListY(y);
-            if (_list.SetHover(listY)) Invalidate();
+            if (_list.SetHover(listY)) ApplyLayered();
         }
 
         private void HandleMouseDown(int x, int y, MouseButtons button)
@@ -500,6 +505,7 @@ namespace nyxWM
             _list.SetItems(
                 RofiSearch.Filter(RofiAppCatalog.GetApps(), _searchText),
                 preserveSelection);
+            ApplyLayered();
         }
 
         private void OnItemActivated(RofiApp app, bool asAdministrator)
@@ -534,6 +540,7 @@ namespace nyxWM
             h = h *31 + _theme.IsLight.GetHashCode();
             h = h *31 + _list.SelectedIndex.GetHashCode();
             h = h *31 + _list.HasActiveAnimation.GetHashCode();
+            h = h *31 + _list.RenderVersion;
             h = h *31 + (_backdrop != null).GetHashCode();
             return h;
         }
