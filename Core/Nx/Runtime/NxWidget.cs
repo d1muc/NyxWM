@@ -15,6 +15,8 @@ namespace nyxWM.Nx
     internal abstract class NxWidget
     {
         private readonly List<NxAnimationTrack> _tracks = new();
+        private NxParticleEmitter? _particles;
+        private double _lastParticleMs;
 
         protected NxWidget(NxNode node, NxStyle style)
         {
@@ -72,6 +74,22 @@ namespace nyxWM.Nx
                 AnimatedStyle = animated;
             }
 
+            // ── Particle emitter ──
+            if (AnimatedStyle.Particles && AnimatedStyle.Visible)
+            {
+                double deltaMs = _lastParticleMs > 0 ? context.NowMs - _lastParticleMs : 16.0;
+                _lastParticleMs = context.NowMs;
+
+                if (_particles == null)
+                    _particles = new NxParticleEmitter(AnimatedStyle, Node.SourceFile);
+                _particles.Update(deltaMs, Bounds, AnimatedStyle);
+            }
+            else
+            {
+                _particles = null;
+                _lastParticleMs = 0;
+            }
+
             Opacity = opacity;
         }
 
@@ -97,6 +115,12 @@ namespace nyxWM.Nx
 
         /// <summary>Draws the element inside its bounds, opacity already applied to colours.</summary>
         internal abstract void Paint(Graphics graphics, NxContext context);
+
+        /// <summary>Paints any active particles for this element. Called after base paint.</summary>
+        internal void PaintParticles(Graphics graphics, NxContext context)
+        {
+            _particles?.Paint(graphics, AnimatedStyle);
+        }
 
         internal SizeF Measure(NxContext context, SizeF available)
         {
@@ -159,13 +183,25 @@ namespace nyxWM.Nx
             if (style.Shadow && style.Background.Count > 0)
                 PaintShadow(graphics, box, cornerRadius, style);
 
+            // ── Glow / bloom ──
+            if (style.GlowColor.A > 0 && style.GlowRadius > 0)
+                PaintGlow(graphics, box, cornerRadius, style);
+
+            // ── Chromatic aberration ──
+            if (style.ChromaticShift > 0)
+                PaintChromatic(graphics, context, box, cornerRadius);
+
             if (style.Background.Count == 0 || box.Width <= 0 || box.Height <= 0)
                 return;
 
-            using GraphicsPath path = BuildShape(style.Shape, box, cornerRadius);
+            using GraphicsPath path = BuildShapeFromStyle(style, box, cornerRadius);
 
             using (Brush brush = BuildBrush(style, box))
                 graphics.FillPath(brush, path);
+
+            // ── Scanlines ──
+            if (style.Scanlines > 0)
+                PaintScanlines(graphics, box, cornerRadius, style);
 
             if (style.BorderWidth > 0)
             {
@@ -281,6 +317,152 @@ namespace nyxWM.Nx
             }
 
             return path;
+        }
+
+        /// <summary>Builds a shape from the style, supporting path data.</summary>
+        internal static GraphicsPath BuildShapeFromStyle(NxStyle style, RectangleF box, float radius)
+        {
+            if (style.PathData.Length > 0)
+                return BuildPathShape(style.PathData, box);
+
+            return BuildShape(style.Shape, box, radius);
+        }
+
+        /// <summary>Parses a compact SVG-like path string: "M x,y L x,y ... Z".</summary>
+        private static GraphicsPath BuildPathShape(string data, RectangleF box)
+        {
+            var path = new GraphicsPath();
+            string[] commands = data.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            float x = box.X, y = box.Y, w = box.Width, h = box.Height;
+            PointF? lastPoint = null;
+
+            for (int i = 0; i < commands.Length; i++)
+            {
+                string cmd = commands[i].ToUpperInvariant();
+                if (cmd is "M" or "L")
+                {
+                    i++;
+                    if (i >= commands.Length) break;
+                    string[] parts = commands[i].Split(',');
+                    if (parts.Length < 2) continue;
+                    float px = ParseCoord(parts[0], x, w);
+                    float py = ParseCoord(parts[1], y, h);
+                    var pt = new PointF(px, py);
+
+                    if (cmd == "M") { path.StartFigure(); }
+                    else if (lastPoint.HasValue) { path.AddLine(lastPoint.Value, pt); }
+
+                    lastPoint = pt;
+                }
+                else if (cmd == "C")
+                {
+                    if (i + 3 >= commands.Length) break;
+                    string[] cp1 = commands[++i].Split(',');
+                    string[] cp2 = commands[++i].Split(',');
+                    string[] ep = commands[++i].Split(',');
+                    if (cp1.Length >= 2 && cp2.Length >= 2 && ep.Length >= 2 && lastPoint.HasValue)
+                    {
+                        var pt1 = new PointF(ParseCoord(cp1[0], x, w), ParseCoord(cp1[1], y, h));
+                        var pt2 = new PointF(ParseCoord(cp2[0], x, w), ParseCoord(cp2[1], y, h));
+                        var pt3 = new PointF(ParseCoord(ep[0], x, w), ParseCoord(ep[1], y, h));
+                        path.AddBezier(lastPoint.Value, pt1, pt2, pt3);
+                        lastPoint = pt3;
+                    }
+                }
+                else if (cmd == "Z")
+                {
+                    path.CloseFigure();
+                    lastPoint = null;
+                }
+            }
+            return path;
+        }
+
+        private static float ParseCoord(string s, float origin, float size)
+        {
+            s = s.Trim();
+            if (s.EndsWith("%"))
+            {
+                if (float.TryParse(s[..^1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float pct))
+                    return origin + size * pct / 100f;
+            }
+            if (float.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float abs))
+                return origin + abs;
+            return origin;
+        }
+
+        /// <summary>Renders a glow/bloom effect around the element.</summary>
+        private void PaintGlow(Graphics graphics, RectangleF box, float cornerRadius, NxStyle style)
+        {
+            float spread = (float)style.GlowSpread;
+            int layers = Math.Min(8, Math.Max(2, (int)(style.GlowRadius / 3.0)));
+            byte baseAlpha = style.GlowColor.A;
+            float alphaStep = (float)baseAlpha / layers;
+
+            for (int i = layers; i >= 0; i--)
+            {
+                float offset = (float)i / layers * spread;
+                var glowBox = new RectangleF(
+                    box.X - offset, box.Y - offset,
+                    box.Width + offset * 2f, box.Height + offset * 2f);
+                float cr = cornerRadius + offset;
+                float alpha = alphaStep * (layers - i + 1) * 0.5f;
+
+                using GraphicsPath path = BuildShapeFromStyle(style, glowBox, cr);
+                using var pen = new Pen(
+                    Color.FromArgb(Math.Min(255, (int)alpha), style.GlowColor.R, style.GlowColor.G, style.GlowColor.B),
+                    Math.Max(1f, spread / layers * 2f));
+                graphics.DrawPath(pen, path);
+            }
+        }
+
+        /// <summary>Renders chromatic aberration (red/blue offset).</summary>
+        private void PaintChromatic(Graphics graphics, NxContext context, RectangleF box, float cornerRadius)
+        {
+            float shift = (float)AnimatedStyle.ChromaticShift;
+            if (shift <= 0 || box.Width <= 0 || box.Height <= 0) return;
+
+            // Red channel shifted right
+            var rBox = new RectangleF(box.X + shift, box.Y, box.Width, box.Height);
+            using GraphicsPath rPath = BuildShapeFromStyle(AnimatedStyle, rBox, cornerRadius);
+            if (AnimatedStyle.Background.Count > 0)
+            {
+                using var rBrush = new SolidBrush(Color.FromArgb(60, 255, 0, 0));
+                graphics.FillPath(rBrush, rPath);
+            }
+            using var rPen = new Pen(Color.FromArgb(60, 255, 0, 0), Math.Max(1f, shift * 0.3f));
+            graphics.DrawPath(rPen, rPath);
+
+            // Blue channel shifted left
+            var bBox = new RectangleF(box.X - shift, box.Y, box.Width, box.Height);
+            using GraphicsPath bPath = BuildShapeFromStyle(AnimatedStyle, bBox, cornerRadius);
+            if (AnimatedStyle.Background.Count > 0)
+            {
+                using var bBrush = new SolidBrush(Color.FromArgb(60, 0, 0, 255));
+                graphics.FillPath(bBrush, bPath);
+            }
+            using var bPen = new Pen(Color.FromArgb(60, 0, 0, 255), Math.Max(1f, shift * 0.3f));
+            graphics.DrawPath(bPen, bPath);
+        }
+
+        /// <summary>Draws horizontal scanlines for a CRT effect.</summary>
+        private void PaintScanlines(Graphics graphics, RectangleF box, float cornerRadius, NxStyle style)
+        {
+            float intensity = (float)style.Scanlines;
+            if (intensity <= 0.001f) return;
+            float spacing = Math.Max(2f, 4f);
+
+            using GraphicsPath clipPath = BuildShapeFromStyle(style, box, cornerRadius);
+            GraphicsState saved = graphics.Save();
+            graphics.SetClip(clipPath);
+
+            using var scanBrush = new SolidBrush(Color.FromArgb((int)(intensity * 80), 0, 0, 0));
+            for (float sy = box.Y; sy < box.Bottom; sy += spacing)
+            {
+                graphics.FillRectangle(scanBrush, box.X, sy, box.Width, Math.Max(1f, spacing * 0.4f));
+            }
+
+            graphics.Restore(saved);
         }
 
         /// <summary>Draws an icon inside a box, honouring an explicit icon size.</summary>

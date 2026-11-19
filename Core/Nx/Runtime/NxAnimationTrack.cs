@@ -14,6 +14,7 @@ namespace nyxWM.Nx
         private readonly NxExpressionEvaluator _evaluator;
         private readonly string[] _animatedProperties;
         private readonly double _startMs;
+        private readonly double _randomDelayMs;
 
         private bool _finished;
 
@@ -26,6 +27,12 @@ namespace nyxWM.Nx
             _evaluator = evaluator;
             _startMs = startMs;
             _animatedProperties = CollectProperties(animation);
+
+            // Random delay: stagger animations across elements
+            if (animation.RandomOffset)
+                _randomDelayMs = new Random(Environment.TickCount + _startMs.GetHashCode()).NextDouble() * animation.DurationMs * 0.5;
+            else
+                _randomDelayMs = 0;
         }
 
         internal string Name => _animation.Name;
@@ -42,7 +49,7 @@ namespace nyxWM.Nx
         /// <summary>Computes the style for <paramref name="nowMs"/> on top of the declared style.</summary>
         internal NxStyle Apply(double nowMs, NxStyle baseStyle)
         {
-            double elapsed = Math.Max(0.0, nowMs - _startMs);
+            double elapsed = Math.Max(0.0, nowMs - _startMs - _randomDelayMs);
             double duration = _animation.DurationMs;
             double progress = elapsed / duration;
 

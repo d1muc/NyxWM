@@ -37,7 +37,7 @@ namespace nyxWM.Nx
         internal double Padding { get; init; } = 6.0;
         internal double Spacing { get; init; } = 8.0;
 
-        /// <summary>Box silhouette: round, square, circle, triangle, diamond, line, none.</summary>
+        /// <summary>Box silhouette: round, square, circle, triangle, diamond, line, none, plus custom SVG-like path.</summary>
         internal string Shape { get; init; } = "round";
 
         internal bool Shadow { get; init; }
@@ -50,6 +50,33 @@ namespace nyxWM.Nx
 
         /// <summary>Declared visibility. A false value removes the element from layout.</summary>
         internal bool Visible { get; init; } = true;
+
+        // ── Glow / bloom ──
+        internal NxColor GlowColor { get; init; } = NxColor.Transparent;
+        internal double GlowRadius { get; init; }
+        internal double GlowSpread { get; init; } = 4.0;
+
+        // ── CRT / scanline ──
+        internal double Scanlines { get; init; }
+
+        // ── Chromatic aberration ──
+        internal double ChromaticShift { get; init; }
+
+        // ── Random animation offset ──
+        internal double RandomX { get; init; }
+        internal double RandomY { get; init; }
+
+        // ── Custom SVG-like path data ──
+        internal string PathData { get; init; } = string.Empty;
+
+        // ── Particle emitter (element spawns child particles) ──
+        internal bool Particles { get; init; }
+        internal double ParticleCount { get; init; } = 12.0;
+        internal double ParticleSpeed { get; init; } = 60.0;
+        internal double ParticleLifetime { get; init; } = 2000.0;
+        internal string ParticleShape { get; init; } = "circle";
+        internal double ParticleSize { get; init; } = 8.0;
+        internal string ParticleImage { get; init; } = string.Empty;
 
         /// <summary>First background colour, or transparent when none was given.</summary>
         internal NxColor PrimaryBackground =>
@@ -165,6 +192,54 @@ namespace nyxWM.Nx
                 case "height":
                     return style with { HeightOverride = ReadSize(value, evaluator) };
 
+                case "glow":
+                case "glowcolor":
+                    return style with { GlowColor = evaluator.EvaluateColor(value, style.GlowColor) };
+
+                case "glowradius":
+                    return style with { GlowRadius = evaluator.EvaluateNumber(value, style.GlowRadius) };
+
+                case "glowspread":
+                    return style with { GlowSpread = evaluator.EvaluateNumber(value, style.GlowSpread) };
+
+                case "scanlines":
+                    return style with { Scanlines = Math.Clamp(evaluator.EvaluateNumber(value, style.Scanlines), 0.0, 1.0) };
+
+                case "chromatic":
+                case "chromaticshift":
+                    return style with { ChromaticShift = evaluator.EvaluateNumber(value, style.ChromaticShift) };
+
+                case "randomx":
+                    return style with { RandomX = evaluator.EvaluateNumber(value, style.RandomX) };
+
+                case "randomy":
+                    return style with { RandomY = evaluator.EvaluateNumber(value, style.RandomY) };
+
+                case "pathdata":
+                case "path":
+                    return style with { PathData = evaluator.EvaluateText(value, style.PathData) };
+
+                case "particles":
+                    return style with { Particles = evaluator.EvaluateFlag(value, style.Particles) };
+
+                case "particlecount":
+                    return style with { ParticleCount = evaluator.EvaluateNumber(value, style.ParticleCount) };
+
+                case "particlespeed":
+                    return style with { ParticleSpeed = evaluator.EvaluateNumber(value, style.ParticleSpeed) };
+
+                case "particlelifetime":
+                    return style with { ParticleLifetime = evaluator.EvaluateNumber(value, style.ParticleLifetime) };
+
+                case "particleshape":
+                    return style with { ParticleShape = evaluator.EvaluateText(value, style.ParticleShape) };
+
+                case "particlesize":
+                    return style with { ParticleSize = evaluator.EvaluateNumber(value, style.ParticleSize) };
+
+                case "particleimage":
+                    return style with { ParticleImage = evaluator.EvaluateText(value, style.ParticleImage) };
+
                 default:
                     return style;
             }
@@ -216,6 +291,16 @@ namespace nyxWM.Nx
                 "spacing" or "gap" => this with { Spacing = value },
                 "width" => this with { WidthOverride = value },
                 "height" => this with { HeightOverride = value },
+                "glowradius" => this with { GlowRadius = value },
+                "glowspread" => this with { GlowSpread = value },
+                "scanlines" => this with { Scanlines = Math.Clamp(value, 0.0, 1.0) },
+                "chromatic" or "chromaticshift" => this with { ChromaticShift = value },
+                "randomx" => this with { RandomX = value },
+                "randomy" => this with { RandomY = value },
+                "particlecount" => this with { ParticleCount = value },
+                "particlespeed" => this with { ParticleSpeed = value },
+                "particlelifetime" => this with { ParticleLifetime = value },
+                "particlesize" => this with { ParticleSize = value },
                 _ => this
             };
         }
@@ -228,6 +313,7 @@ namespace nyxWM.Nx
                 "background" or "bg" => this with { Background = new[] { value } },
                 "foreground" or "fg" or "color" => this with { Foreground = value },
                 "border" => this with { BorderColor = value },
+                "glow" or "glowcolor" => this with { GlowColor = value },
                 _ => this
             };
         }
@@ -240,7 +326,10 @@ namespace nyxWM.Nx
                 "opacity" or "radius" or "scale" or "offsetx" or "offsety" or "rotation" or
                 "borderwidth" or "fontsize" or "iconsize" or "padding" or "spacing" or "gap" or
                 "width" or "height" or "background" or "bg" or "foreground" or "fg" or
-                "color" or "border" => true,
+                "color" or "border" or "glowradius" or "glowspread" or "scanlines" or
+                "chromatic" or "chromaticshift" or "randomx" or "randomy" or
+                "particlecount" or "particlespeed" or "particlelifetime" or "particlesize" or
+                "glow" or "glowcolor" => true,
                 _ => false
             };
         }
@@ -249,7 +338,7 @@ namespace nyxWM.Nx
         {
             return name switch
             {
-                "background" or "bg" or "foreground" or "fg" or "color" or "border" => true,
+                "background" or "bg" or "foreground" or "fg" or "color" or "border" or "glow" or "glowcolor" => true,
                 _ => false
             };
         }

@@ -83,6 +83,10 @@ namespace nyxWM.Nx
 
             Current = this;
 
+            // Apply FPS from theme if set
+            if (NxTheme.Current.Fps > 0)
+                UiAnimationHost.RequestHz(NxTheme.Current.Fps);
+
             LoadDocuments(initial: true);
             WatchDirectories();
 

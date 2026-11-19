@@ -202,6 +202,7 @@ namespace nyxWM.Nx
             bool loop = false;
             bool alternate = false;
             string easing = "ease-out";
+            bool randomOffset = false;
             var frames = new List<NxKeyframe>();
             int index = 0;
 
@@ -247,6 +248,9 @@ namespace nyxWM.Nx
                         case "easing":
                             easing = ParseTextValue();
                             break;
+                        case "random":
+                            randomOffset = ParseBooleanValue();
+                            break;
                     }
 
                     AdvanceStatement();
@@ -265,7 +269,7 @@ namespace nyxWM.Nx
                 SkipSeparators();
             }
 
-            return new NxAnimation(name, durationMs, loop, alternate, easing, frames);
+            return new NxAnimation(name, durationMs, loop, alternate, easing, frames, randomOffset);
         }
 
         private NxKeyframe ParseKeyframe(int index, string defaultEasing)

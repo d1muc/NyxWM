@@ -1,0 +1,102 @@
+// ─── NEON RED ─── Bright neon outlines, dark void background, glowing borders.
+// Switch: set "ThemeFile": "neon-red.nx" in config.jsonc
+
+// ---- colours --------------------------------------------------------------
+accent:        #ff2222
+accent-soft:   #7dff2222
+fg:            #ffffff
+muted:         #cc6666
+ok:            #ff4444
+warn:          #ff8800
+bad:           #ff0066
+
+// Deep void background — barely there, so the neon strokes pop.
+bg:            #ee080011
+bg-soft:       #99080011
+bg-hover:      #26ff2222
+stroke:        #ff3333
+
+surface-opacity: 0.94
+
+// ---- geometry -------------------------------------------------------------
+radius:        12
+radius-small:  8
+gap:           10
+padding:       8
+font:          "Segoe UI"
+size:          13
+size-small:    11
+
+// FPS override — smooth animations for neon glow
+fps: 90
+
+// ---- animations -----------------------------------------------------------
+
+// Fast pop with a slight overshoot fits the electric neon feel.
+animation pop:
+    duration: 180ms
+    easing: back-out
+    {
+        opacity: 0
+        scale: 0.85
+    }
+    100% {
+        opacity: 1
+        scale: 1
+    }
+
+// Pulse the glow — faster than the default breathe, more aggressive.
+animation breathe:
+    duration: 800ms
+    loop: true
+    alternate: true
+    easing: sine
+    {
+        opacity: 0.4
+        scale: 0.85
+    }
+    100% {
+        opacity: 1
+        scale: 1.15
+    }
+
+animation slide-in:
+    duration: 220ms
+    easing: ease-out
+    {
+        opacity: 0
+        offsetx: -14
+    }
+    100% {
+        opacity: 1
+        offsetx: 0
+    }
+
+// Red glow cross-fade — a neon tube that warms between two reds.
+animation glow:
+    duration: 900ms
+    loop: true
+    alternate: true
+    easing: sine
+    {
+        background: #33ff2222
+        foreground: #ff6666
+    }
+    100% {
+        background: #88ff4444
+        foreground: #ffffff
+    }
+
+animation sweep:
+    duration: 2000ms
+    loop: true
+    easing: linear
+    {
+        opacity: 0.3
+    }
+    50% {
+        opacity: 1
+    }
+    100% {
+        opacity: 0.3
+    }

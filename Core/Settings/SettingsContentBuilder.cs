@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
+using System.IO;
 using System.Windows.Forms;
 
 namespace nyxWM
@@ -29,6 +30,7 @@ namespace nyxWM
         private readonly NotificationTheme _theme;
         private readonly float _scale;
         private readonly ConfigSettings _config;
+        private readonly string _themeDirectory;
         private readonly Font _labelFont;
         private readonly Font _fieldFont;
         private readonly Font _boldFont;
@@ -62,6 +64,8 @@ namespace nyxWM
         private SettingsComboBox? _positionCombo;
         private SettingsSlider? _durationSlider;
 
+        private SettingsComboBox? _themeFileCombo;
+
         private SettingsComboBox? _terminalFontCombo;
         private SettingsSlider? _terminalFontSizeSlider;
         private SettingsSegmented? _terminalCursorSegmented;
@@ -78,6 +82,7 @@ namespace nyxWM
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
             _scale = Math.Clamp(scale, 0.75f, 3f);
             _config = config ?? throw new ArgumentNullException(nameof(config));
+            _themeDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "themes");
 
             _labelFont = VisualPreferences.CreateUiFont("Segoe UI", 9.75f, FontStyle.Regular);
             _fieldFont = VisualPreferences.CreateUiFont("Segoe UI", 9.5f, FontStyle.Regular);
@@ -458,7 +463,7 @@ namespace nyxWM
         {
             float cardWidth = width - Pad * 2f;
             float cardHeight = 116f * _scale;
-            float themesHeight = 160f * _scale;
+            float themesHeight = 196f * _scale;
             float gap = 12f * _scale;
             float innerPad = 14f * _scale;
             float innerWidth = cardWidth - innerPad * 2f;
@@ -466,6 +471,7 @@ namespace nyxWM
             float row1 = 40f * _scale;
             float row2 = 76f * _scale;
             float row3 = 112f * _scale;
+            float row4 = 148f * _scale;
 
             float y = 8f * _scale;
 
@@ -534,6 +540,19 @@ namespace nyxWM
             themes.Controls.Add(uiScaleBox);
             LinkSlider(uiScaleSlider, uiScaleBox);
             _uiScaleSlider = uiScaleSlider;
+
+            AddLabel(themes, ".nx theme file", innerPad, row4, innerWidth * 0.5f);
+
+            var themeFile = new SettingsComboBox(_theme.Accent)
+            {
+                Font = _fieldFont,
+                ItemHeight = Math.Max(18, (int)MathF.Round(22f * _scale)),
+                Bounds = Rect(cardWidth - innerPad - 190f * _scale, row4, 190f * _scale, rowHeight)
+            };
+
+            PopulateThemeFiles(themeFile, VisualPreferences.ThemeFile);
+            themes.Controls.Add(themeFile);
+            _themeFileCombo = themeFile;
 
             y += themesHeight + gap;
 
@@ -1044,6 +1063,54 @@ namespace nyxWM
                 combo.SelectedIndex = 0;
         }
 
+        private void PopulateThemeFiles(SettingsComboBox combo, string current)
+        {
+            if (!Directory.Exists(_themeDirectory))
+            {
+                combo.Items.Add(current);
+                combo.SelectedItem = current;
+                return;
+            }
+
+            string selected = current;
+
+            try
+            {
+                foreach (string file in Directory.EnumerateFiles(_themeDirectory, "*.nx"))
+                {
+                    string name = Path.GetFileName(file);
+                    combo.Items.Add(name);
+                    if (string.Equals(name, current, StringComparison.OrdinalIgnoreCase))
+                        selected = name;
+                }
+            }
+            catch
+            {
+            }
+
+            if (combo.Items.Count == 0)
+                combo.Items.Add(current);
+
+            if (selected.Length > 0)
+            {
+                for (int i = 0; i < combo.Items.Count; i++)
+                {
+                    if (string.Equals(
+                            combo.Items[i]?.ToString(),
+                            selected,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        combo.SelectedIndex = i;
+                        break;
+                    }
+                }
+            }
+            else if (combo.Items.Count > 0)
+            {
+                combo.SelectedIndex = 0;
+            }
+        }
+
         private static string NormalizeChoice(string? value)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -1116,6 +1183,8 @@ namespace nyxWM
                 ThemeMode = _themeModeSegmented?.SelectedOption ?? VisualPreferences.ModeDark,
                 Theme = _accentCombo?.SelectedItem?.ToString()
                         ?? NotificationThemeResolver.DefaultAccentName,
+                ThemeFile = _themeFileCombo?.SelectedItem?.ToString()
+                        ?? VisualPreferences.ThemeFile,
                 GlassEnabled = _glassToggle?.Checked ?? true,
                 WindowOpacity = ParseOpacity(_opacitySlider?.Value),
                 UiScale = ParseUiScale(_uiScaleSlider?.Value),

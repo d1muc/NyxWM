@@ -145,6 +145,7 @@ namespace nyxWM.Nx
         private void PaintTree(Graphics graphics, NxWidget widget)
         {
             widget.Paint(graphics, _context);
+            widget.PaintParticles(graphics, _context);
 
             if (widget is NxPanel panel)
             {

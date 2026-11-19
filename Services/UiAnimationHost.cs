@@ -253,7 +253,7 @@ namespace nyxWM
 
         private static int NormalizeHz(int hz)
         {
-            if (hz < 30 || hz > 480)
+            if (hz < 1 || hz > 480)
                 return 60;
 
             return hz;

@@ -276,6 +276,7 @@ namespace nyxWM.Nx
         internal bool Alternate { get; }
         internal string Easing { get; }
         internal IReadOnlyList<NxKeyframe> Keyframes { get; }
+        internal bool RandomOffset { get; }
 
         internal NxAnimation(
             string name,
@@ -283,7 +284,8 @@ namespace nyxWM.Nx
             bool loop,
             bool alternate,
             string easing,
-            IReadOnlyList<NxKeyframe> keyframes)
+            IReadOnlyList<NxKeyframe> keyframes,
+            bool randomOffset = false)
         {
             Name = name;
             DurationMs = Math.Max(1.0, durationMs);
@@ -291,6 +293,7 @@ namespace nyxWM.Nx
             Alternate = alternate;
             Easing = easing;
             Keyframes = keyframes;
+            RandomOffset = randomOffset;
         }
     }
 

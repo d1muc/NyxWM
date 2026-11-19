@@ -65,6 +65,9 @@ namespace nyxWM.Nx
         internal float FontSizeSmall { get; }
         internal float SurfaceOpacity { get; }
 
+        /// <summary>Target frame rate from theme file, or 0 if not set (use default).</summary>
+        internal int Fps { get; }
+
         private NxTheme(
             Color accent,
             Color accentSoft,
@@ -89,7 +92,8 @@ namespace nyxWM.Nx
             string fontFamily,
             float fontSize,
             float fontSizeSmall,
-            float surfaceOpacity)
+            float surfaceOpacity,
+            int fps)
         {
             Accent = accent;
             AccentSoft = accentSoft;
@@ -115,6 +119,7 @@ namespace nyxWM.Nx
             FontSize = fontSize;
             FontSizeSmall = fontSizeSmall;
             SurfaceOpacity = surfaceOpacity;
+            Fps = fps;
         }
 
         internal static void Install(NxTheme? theme)
@@ -198,7 +203,8 @@ namespace nyxWM.Nx
                 TextToken(tokens, "font", "Segoe UI"),
                 NumberToken(tokens, "size", 13f),
                 NumberToken(tokens, "size-small", 11f),
-                Math.Clamp(NumberToken(tokens, "surface-opacity", 0.95f), 0.4f, 1f));
+                Math.Clamp(NumberToken(tokens, "surface-opacity", 0.95f), 0.4f, 1f),
+                (int)NumberToken(tokens, "fps", 0f));
         }
 
         internal static NxTheme CreateDefault()
@@ -229,7 +235,8 @@ namespace nyxWM.Nx
                 "Segoe UI",
                 13f,
                 11f,
-                0.95f);
+                0.95f,
+                0);
         }
 
         private static Color ResolveAccent(

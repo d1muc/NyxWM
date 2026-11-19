@@ -247,12 +247,38 @@ namespace nyxWM
                     ConfigManager.Current.MainMod);
                 windowManager.ApplyLiveConfig();
 
-                int liveRefreshRate = MonitorUtils.GetPrimaryMonitorRefreshRate(
-                    ConfigManager.Current.FallbackRefreshRate);
-                UiAnimationHost.RequestHz(liveRefreshRate);
+                // Reload .nx theme — picks up a changed ThemeFile from settings.
+                System.Drawing.Color autoAccent = NotificationThemeResolver.ResolveAccentColor(
+                    ConfigManager.GetLiveTheme());
+                NxThemeLoader themeLoader = NxThemeLoader.Load(
+                    AppDomain.CurrentDomain.BaseDirectory,
+                    autoAccent,
+                    ConfigManager.Current.ThemeFile);
+                NxTheme.Install(themeLoader.Theme);
+
+                // Apply FPS from theme, or fall back to monitor refresh rate.
+                if (NxTheme.Current.Fps > 0)
+                    UiAnimationHost.RequestHz(NxTheme.Current.Fps);
+                else
+                {
+                    int liveRefreshRate = MonitorUtils.GetPrimaryMonitorRefreshRate(
+                        ConfigManager.Current.FallbackRefreshRate);
+                    UiAnimationHost.RequestHz(liveRefreshRate);
+                }
+
+                // Rebuild all .nx surfaces with new theme.
+                NxRuntime.Current?.Reload();
 
                 TerminalWindowService.ApplyThemeToAll();
                 TerminalWindowService.ApplySettingsToAll();
+
+                if (themeLoader.ErrorMessage != null)
+                {
+                    string msg = themeLoader.ErrorMessage;
+                    UiAnimationHost.Post(() => NotificationService.Show(
+                        "Theme",
+                        $"Error loading {ConfigManager.Current.ThemeFile}: {msg}"));
+                }
             };
 
             // Register hotkeys from configuration

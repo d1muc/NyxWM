@@ -25,6 +25,16 @@ namespace nyxWM
 
         internal static bool SmoothAnimations => ConfigManager.Current.SmoothAnimations;
 
+        /// <summary>.nx theme file name, from config. Default: "theme.nx".</summary>
+        internal static string ThemeFile
+        {
+            get
+            {
+                string value = ConfigManager.Current.ThemeFile;
+                return string.IsNullOrWhiteSpace(value) ? "theme.nx" : value;
+            }
+        }
+
         /// <summary>
         /// Manual interface scale multiplier from the Visuals settings.
         /// Falls back to 1.0 when the stored value is missing or out of range.

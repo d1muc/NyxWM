@@ -1,0 +1,94 @@
+// ─── ARCH CONSOLE ─── Terminal-like aesthetic: monospace, green-on-black, square corners.
+// Switch: set "ThemeFile": "arch-console.nx" in config.jsonc
+
+// ---- colours --------------------------------------------------------------
+accent:        #33ff33
+accent-soft:   #7d33ff33
+fg:            #33ff33
+muted:         #1a7f1a
+ok:            #33ff33
+warn:          #ffff33
+bad:           #ff3333
+
+// Pure black background like a real terminal.
+bg:            #e6000000
+bg-soft:       #99000000
+bg-hover:      #2633ff33
+stroke:        #33ff33
+
+surface-opacity: 0.96
+
+// ---- geometry -------------------------------------------------------------
+// Flat, square corners — no rounded edges in a terminal.
+radius:        0
+radius-small:  0
+gap:           6
+padding:       6
+font:          "Consolas"
+size:          12
+size-small:    10
+
+// Low FPS for the retro console feel.
+fps: 12
+
+// ---- animations -----------------------------------------------------------
+// Step-eased animations — instant frame changes, no smooth interpolation.
+animation pop:
+    duration: 300ms
+    easing: step
+    {
+        opacity: 0
+    }
+    100% {
+        opacity: 1
+    }
+
+// A cursor blink instead of a smooth breathe.
+animation breathe:
+    duration: 1000ms
+    loop: true
+    easing: step
+    {
+        opacity: 0
+    }
+    50% {
+        opacity: 1
+    }
+
+// Instant slide — no motion.
+animation slide-in:
+    duration: 100ms
+    easing: step
+    {
+        opacity: 0
+    }
+    100% {
+        opacity: 1
+    }
+
+// No glow — a terminal doesn't glow.
+animation glow:
+    duration: 1000ms
+    loop: true
+    alternate: true
+    easing: step
+    {
+        background: #0033ff33
+    }
+    100% {
+        background: #0a33ff33
+    }
+
+animation sweep:
+    duration: 3000ms
+    loop: true
+    easing: linear
+    {
+        opacity: 0.4
+    }
+    50% {
+        opacity: 1
+    }
+    100% {
+        opacity: 0.4
+    }
