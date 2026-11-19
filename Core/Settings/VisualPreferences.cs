@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using nyxWM.Nx;
 
 namespace nyxWM
 {
@@ -39,19 +40,26 @@ namespace nyxWM
         }
 
         /// <summary>
-        /// Creates a UI font whose point size follows the manual interface scale.
-        /// DPI scaling is applied by GDI+ itself, so only the manual multiplier
-        /// belongs here.
+        /// Creates a UI font whose point size follows the manual interface scale
+        /// and the font family/size from the .nx theme. DPI scaling is applied by
+        /// GDI+ itself, so only the manual multiplier belongs here.
         /// </summary>
         internal static Font CreateUiFont(string family, float sizePoints, FontStyle style)
         {
-            return new Font(family, sizePoints * UiScale, style, GraphicsUnit.Point);
+            NxTheme theme = NxTheme.Current;
+            float themeRatio = ClampFinite(theme.FontSize / 13f, 0.5f, 2f);
+            return new Font(theme.FontFamily, sizePoints * themeRatio * UiScale, style, GraphicsUnit.Point);
         }
 
         internal static float WindowOpacity
         {
             get
             {
+                NxTheme theme = NxTheme.Current;
+
+                if (theme.SurfaceOpacity > 0f)
+                    return ClampFinite(theme.SurfaceOpacity, 0.4f, 1f);
+
                 float value = ConfigManager.Current.WindowOpacity;
                 if (value <= 0f)
                     value = 0.95f;
@@ -79,16 +87,19 @@ namespace nyxWM
         }
 
         /// <summary>
-        /// Maps the selected corner style onto a rounded-design radius.
-        /// Sharp removes the rounding, Smooth exaggerates it.
+        /// Maps the selected corner style onto a rounded-design radius. The base
+        /// radius comes from the .nx theme, so changing "$radius" reshapes every
+        /// window at once.
         /// </summary>
         internal static float CornerRadius(float roundedDip)
         {
+            float themed = roundedDip * ThemeRadiusScale();
+
             return NormalizeCorner(ConfigManager.Current.CornerStyle) switch
             {
                 CornerSharp => 0f,
-                CornerSmooth => roundedDip * 1.5f,
-                _ => roundedDip
+                CornerSmooth => themed * 1.5f,
+                _ => themed
             };
         }
 
@@ -97,12 +108,25 @@ namespace nyxWM
         /// </summary>
         internal static float CornerRadiusRatio(float roundedRatio)
         {
+            float themed = roundedRatio * ThemeRadiusScale();
+
             return NormalizeCorner(ConfigManager.Current.CornerStyle) switch
             {
                 CornerSharp => 0.05f,
-                CornerSmooth => MathF.Min(0.5f, roundedRatio * 1.3f),
-                _ => roundedRatio
+                CornerSmooth => MathF.Min(0.5f, themed * 1.3f),
+                _ => themed
             };
+        }
+
+        /// <summary>How much larger the theme radius is than the 14px baseline.</summary>
+        private static float ThemeRadiusScale()
+        {
+            return ClampFinite(NxTheme.Current.Radius / 14f, 0f, 3f);
+        }
+
+        private static float ClampFinite(float value, float min, float max)
+        {
+            return float.IsFinite(value) ? Math.Clamp(value, min, max) : min;
         }
     }
 }

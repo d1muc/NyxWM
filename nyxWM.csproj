@@ -12,6 +12,16 @@
     <None Update="Res/**/*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+
+    <!-- Editable .nx documents land in "themes" next to the executable. -->
+    <None Remove="Themes\**\*" />
+    <None Include="Themes\**\*" Link="themes\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+
+    <!-- The built-in copy of theme.nx is compiled into the exe. It is the
+         fallback when the editable file has an error. -->
+    <EmbeddedResource Include="Themes/theme.nx" LogicalName="nyxWM.Themes.theme.default.nx" />
   </ItemGroup>
   <ItemGroup>
     <!-- The installer is a separate project; keep it out of the application's implicit globs. -->

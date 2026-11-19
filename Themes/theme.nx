@@ -8,19 +8,27 @@
 // ---------------------------------------------------------------------------
 
 // ---- colours --------------------------------------------------------------
-accent:        #7aa2f7   // primary highlight
-accent-soft:   #4d7aa2f7 // same colour at 30% alpha
+// "auto" keeps the accent picked in nyxWM settings. Replace it with a colour
+// (e.g. #7aa2f7) to pin the accent in this file instead.
+accent:        auto
+accent-soft:   #4d3b82f6 // same colour at 30% alpha
 fg:            #e6e9ef   // main text
 muted:         #99a3b3   // secondary text
 ok:            #9ece6a
 warn:          #e0af68
 bad:           #f7768e
 
-// Surfaces are translucent so the desktop shows through.
+// Surfaces are translucent so the desktop shows through. For the settings,
+// Rofi and terminal windows only the RGB is used and the window opacity is
+// applied on top, so these colours also define those windows.
 bg:            #cc12151c
 bg-soft:       #991b1f2a
 bg-hover:      #26ffffff
 stroke:        #1fffffff
+
+// Opacity of the settings / Rofi / terminal / notification windows, 0.4 - 1.
+// 0.95 gives a hint of the desktop through every overlay.
+surface-opacity: 0.95
 
 // ---- geometry -------------------------------------------------------------
 radius:        14

@@ -7,17 +7,12 @@ using System.Windows.Forms;
 
 namespace nyxWM
 {
-    /// <summary>
-    /// Owner-drawn, scrollable application list used by the Rofi menu. The
-    /// search field keeps keyboard focus, so this control only paints rows and
-    /// reports mouse selection. The selection highlight glides between rows.
-    /// </summary>
-    internal sealed class RofiAppList : Control
+    internal sealed class RofiAppList : IDisposable
     {
         private const float RowHeightDip = 52f;
         private const float IconSizeDip = 32f;
         private const float IconRadiusDip = 9f;
-        private const float ScrollbarWidthDip =1f;
+        private const float ScrollbarWidthDip = 4f;
         private const float ScrollbarMarginDip = 4f;
         private const float SelectionSmoothingPerSecond = 26f;
 
@@ -40,12 +35,12 @@ namespace nyxWM
         private int _topIndex;
         private int _hoverIndex = -1;
 
-        /// <summary>True while the selection pill is still gliding.</summary>
-        internal bool HasActiveAnimation { get; private set; }
-
         private float _highlightTop;
         private float _highlightHeight;
         private bool _highlightReady;
+
+        private float _drawWidth;
+        private float _drawHeight;
 
         internal RofiAppList(NotificationTheme theme, float scale)
         {
@@ -60,29 +55,14 @@ namespace nyxWM
             _pinMenu = new RofiContextMenu(_theme, _scale, _menuFont);
             _pinAction = _pinMenu.AddAction("Pin to top");
             _pinAction.Click += (_, _) => TogglePinnedTarget();
-
-            SetStyle(
-                ControlStyles.UserPaint |
-                ControlStyles.AllPaintingInWmPaint |
-                ControlStyles.OptimizedDoubleBuffer |
-                ControlStyles.SupportsTransparentBackColor |
-                ControlStyles.ResizeRedraw,
-                true);
-
-            BackColor = Color.Transparent;
-            TabStop = false;
-            Cursor = Cursors.Default;
         }
 
         internal event Action<RofiApp, bool>? ItemActivated;
-
-        /// <summary>
-        /// Raised after a pinned entry was added or removed from the list.
-        /// </summary>
         internal event Action? PinsChanged;
+        internal event Action? Invalidated;
 
         internal int SelectedIndex => _selectedIndex;
-        internal int VisibleRowCount => Math.Max(1, Height / ItemHeight);
+        internal bool HasActiveAnimation { get; private set; }
         internal bool IsPinMenuOpen => _pinMenu.Visible;
 
         internal bool HasSelection =>
@@ -91,6 +71,19 @@ namespace nyxWM
         internal RofiApp? SelectedItem => HasSelection ? _items[_selectedIndex] : null;
 
         private int ItemHeight => Math.Max(1, (int)MathF.Round(RowHeightDip * _scale));
+
+        internal int VisibleRows()
+        {
+            if (_drawHeight <= 0) return 1;
+            return Math.Max(1, (int)(_drawHeight / ItemHeight));
+        }
+
+        internal void SetBounds(float width, float height)
+        {
+            _drawWidth = MathF.Max(1f, width);
+            _drawHeight = MathF.Max(1f, height);
+            EnsureSelectionVisible();
+        }
 
         internal void SetItems(IReadOnlyList<RofiApp> items, bool preserveSelection = false)
         {
@@ -116,7 +109,7 @@ namespace nyxWM
             _hoverIndex = -1;
             SnapHighlight();
             EnsureSelectionVisible();
-            Invalidate();
+            Invalidated?.Invoke();
         }
 
         internal void MoveSelection(int delta)
@@ -130,7 +123,7 @@ namespace nyxWM
             if (next != _selectedIndex)
             {
                 _selectedIndex = next;
-                Invalidate();
+                Invalidated?.Invoke();
             }
 
             EnsureSelectionVisible();
@@ -138,7 +131,7 @@ namespace nyxWM
             if (!_smooth)
             {
                 SnapHighlight();
-                Invalidate();
+                Invalidated?.Invoke();
             }
         }
 
@@ -149,19 +142,9 @@ namespace nyxWM
                 ItemActivated?.Invoke(item, asAdministrator);
         }
 
-        /// <summary>
-        /// Eases the selection pill toward the selected row.
-        /// </summary>
-        /// <summary>
-        /// Advances the selection pill on the frame clock and reports whether it
-        /// is still moving. Runs on the ticker thread: the control invalidates
-        /// only through <see cref="FlushFrame"/>, which the window calls on the
-        /// UI thread.
-        /// </summary>
         internal RenderTicker.TickResult AdvanceFrame(double dtMs)
         {
             bool moved = Advance((float)dtMs);
-
             HasActiveAnimation = moved;
 
             if (_items.Count == 0 || _selectedIndex < 0)
@@ -170,10 +153,9 @@ namespace nyxWM
             return moved ? RenderTicker.TickResult.Active : RenderTicker.TickResult.Idle;
         }
 
-        /// <summary>Repaints after <see cref="AdvanceFrame"/> changed the pill.</summary>
         internal void FlushFrame()
         {
-            Invalidate();
+            Invalidated?.Invoke();
         }
 
         private bool Advance(float dtMs)
@@ -242,28 +224,27 @@ namespace nyxWM
             _highlightReady = true;
         }
 
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            base.OnPaint(e);
+        // ---- Public drawing entry point ----
 
-            Graphics graphics = e.Graphics;
+        internal void Draw(Graphics graphics)
+        {
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
             graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
             graphics.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
             int itemHeight = ItemHeight;
-            int visible = VisibleRowCount;
+            int visible = VisibleRows();
             float scrollReserve = _items.Count > visible
                 ? (ScrollbarWidthDip + ScrollbarMarginDip * 2f) * _scale
                 : 0f;
-            float rowWidth = MathF.Max(1f, Width - scrollReserve);
+            float rowWidth = MathF.Max(1f, _drawWidth - scrollReserve);
 
             DrawHighlight(graphics, rowWidth);
 
             for (int i = _topIndex; i < _items.Count; i++)
             {
                 float y = (i - _topIndex) * itemHeight;
-                if (y >= Height)
+                if (y >= _drawHeight)
                     break;
 
                 bool selected = i == _selectedIndex;
@@ -280,6 +261,118 @@ namespace nyxWM
 
             DrawScrollbar(graphics, visible);
         }
+
+        // ---- Mouse input helpers ----
+
+        internal int HitTest(int y)
+        {
+            if (_items.Count == 0)
+                return -1;
+
+            int row = Math.Max(0, y) / ItemHeight;
+            int index = _topIndex + row;
+
+            return index < _items.Count ? index : -1;
+        }
+
+        internal bool SetHover(int y)
+        {
+            int index = HitTest(y);
+            if (index == _hoverIndex)
+                return false;
+
+            _hoverIndex = index;
+            return true;
+        }
+
+        internal bool ClearHover()
+        {
+            if (_hoverIndex < 0)
+                return false;
+
+            _hoverIndex = -1;
+            return true;
+        }
+
+        internal void HandleMouseDown(int y, MouseButtons button, Point screenLocation)
+        {
+            int index = HitTest(y);
+            if (index < 0)
+                return;
+
+            if (button == MouseButtons.Right)
+            {
+                _selectedIndex = index;
+                EnsureSelectionVisible();
+
+                if (!_smooth)
+                    SnapHighlight();
+
+                Invalidated?.Invoke();
+                ShowPinMenu(_items[index], screenLocation);
+                return;
+            }
+
+            if (button != MouseButtons.Left)
+                return;
+
+            _selectedIndex = index;
+            EnsureSelectionVisible();
+
+            if (!_smooth)
+                SnapHighlight();
+
+            Invalidated?.Invoke();
+        }
+
+        internal void HandleMouseUp(int y, MouseButtons button)
+        {
+            if (button != MouseButtons.Left)
+                return;
+
+            int index = HitTest(y);
+            if (index < 0)
+                return;
+
+            _selectedIndex = index;
+
+            if (!_smooth)
+                SnapHighlight();
+
+            ActivateSelected(asAdministrator: false);
+        }
+
+        internal void HandleMouseWheel(int delta, int y)
+        {
+            MoveSelection(delta > 0 ? -1 : 1);
+            SetHover(y);
+        }
+
+        // ---- Context menu ----
+
+        private void ShowPinMenu(RofiApp app, Point screenLocation)
+        {
+            _pinTarget = app;
+            _pinAction.Text = RofiPins.IsPinned(app.Path)
+                ? "Unpin from top"
+                : "Pin to top";
+
+            _pinMenu.Show(screenLocation);
+        }
+
+        private void TogglePinnedTarget()
+        {
+            RofiApp? app = _pinTarget;
+            _pinTarget = null;
+
+            if (app == null || string.IsNullOrWhiteSpace(app.Path))
+                return;
+
+            RofiPins.Toggle(app.Path);
+            PinsChanged?.Invoke();
+        }
+
+        // ---- Drawing helpers ----
 
         private void DrawHighlight(Graphics graphics, float rowWidth)
         {
@@ -537,7 +630,7 @@ namespace nyxWM
                 "No applications found",
                 _nameFont,
                 brush,
-                new RectangleF(0f, 0f, Width, Height),
+                new RectangleF(0f, 0f, _drawWidth, _drawHeight),
                 format);
         }
 
@@ -549,8 +642,8 @@ namespace nyxWM
 
             float width = ScrollbarWidthDip * _scale;
             float margin = ScrollbarMarginDip * _scale;
-            float x = Width - width - margin;
-            var track = new RectangleF(x, margin, width, Height - margin * 2f);
+            float x = _drawWidth - width - margin;
+            var track = new RectangleF(x, margin, width, _drawHeight - margin * 2f);
 
             if (track.Height <= 0f)
                 return;
@@ -578,139 +671,9 @@ namespace nyxWM
             graphics.FillPath(thumbBrush, thumbPath);
         }
 
-        protected override void OnMouseMove(MouseEventArgs e)
-        {
-            base.OnMouseMove(e);
-
-            int index = HitTest(e.Y);
-            if (index == _hoverIndex)
-                return;
-
-            _hoverIndex = index;
-            Cursor = index >= 0 ? Cursors.Hand : Cursors.Default;
-            Invalidate();
-        }
-
-        protected override void OnMouseLeave(EventArgs e)
-        {
-            base.OnMouseLeave(e);
-
-            if (_hoverIndex >= 0)
-            {
-                _hoverIndex = -1;
-                Cursor = Cursors.Default;
-                Invalidate();
-            }
-        }
-
-        protected override void OnMouseDown(MouseEventArgs e)
-        {
-            base.OnMouseDown(e);
-
-            int index = HitTest(e.Y);
-            if (index < 0)
-                return;
-
-            if (e.Button == MouseButtons.Right)
-            {
-                _selectedIndex = index;
-                EnsureSelectionVisible();
-
-                if (!_smooth)
-                    SnapHighlight();
-
-                Invalidate();
-                ShowPinMenu(_items[index], e.Location);
-                return;
-            }
-
-            if (e.Button != MouseButtons.Left)
-                return;
-
-            _selectedIndex = index;
-            EnsureSelectionVisible();
-
-            if (!_smooth)
-                SnapHighlight();
-
-            Invalidate();
-        }
-
-        protected override void OnMouseUp(MouseEventArgs e)
-        {
-            base.OnMouseUp(e);
-
-            if (e.Button != MouseButtons.Left)
-                return;
-
-            int index = HitTest(e.Y);
-            if (index < 0)
-                return;
-
-            _selectedIndex = index;
-
-            if (!_smooth)
-                SnapHighlight();
-
-            ActivateSelected(asAdministrator: false);
-        }
-
-        protected override void OnMouseDoubleClick(MouseEventArgs e)
-        {
-            base.OnMouseDoubleClick(e);
-
-            if (e.Button == MouseButtons.Left)
-                ActivateSelected(asAdministrator: false);
-        }
-
-        protected override void OnMouseWheel(MouseEventArgs e)
-        {
-            base.OnMouseWheel(e);
-            MoveSelection(e.Delta > 0 ? -1 : 1);
-        }
-
-        private void ShowPinMenu(RofiApp app, Point location)
-        {
-            _pinTarget = app;
-            _pinAction.Text = RofiPins.IsPinned(app.Path)
-                ? "Unpin from top"
-                : "Pin to top";
-
-            _pinMenu.Show(this, location);
-        }
-
-        private void TogglePinnedTarget()
-        {
-            RofiApp? app = _pinTarget;
-            _pinTarget = null;
-
-            if (app == null || string.IsNullOrWhiteSpace(app.Path))
-                return;
-
-            RofiPins.Toggle(app.Path);
-            PinsChanged?.Invoke();
-        }
-
-        protected override void OnSizeChanged(EventArgs e)
-        {
-            base.OnSizeChanged(e);
-            EnsureSelectionVisible();
-        }
-
-        private int HitTest(int y)
-        {
-            if (_items.Count == 0)
-                return -1;
-
-            int row = Math.Max(0, y) / ItemHeight;
-            int index = _topIndex + row;
-
-            return index < _items.Count ? index : -1;
-        }
-
         private void EnsureSelectionVisible()
         {
-            int visible = VisibleRowCount;
+            int visible = VisibleRows();
             int count = _items.Count;
             int maxTop = Math.Max(0, count - visible);
             int previousTop = _topIndex;
@@ -725,30 +688,8 @@ namespace nyxWM
 
             _topIndex = Math.Clamp(_topIndex, 0, maxTop);
 
-            // Scrolling changes every row's position, so the pill has to jump
-            // with it. Within one viewport it stays animated.
             if (_topIndex != previousTop && _highlightReady)
                 SnapHighlight();
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                _nameFont.Dispose();
-                _metaFont.Dispose();
-                _badgeFont.Dispose();
-                _iconFont.Dispose();
-                _pinMenu.Dispose();
-                _menuFont.Dispose();
-
-                foreach (Bitmap? image in _iconCache.Values)
-                    image?.Dispose();
-
-                _iconCache.Clear();
-            }
-
-            base.Dispose(disposing);
         }
 
         private static int StableHash(string value)
@@ -762,7 +703,7 @@ namespace nyxWM
 
         private static Color Blend(Color background, Color tint, float amount)
         {
-            float clamped = Math.Clamp(amount, 0f, 1f);
+            float clamped = Math.Clamp(amount, 0f,1f);
 
             return Color.FromArgb(
                 background.A,
@@ -788,6 +729,21 @@ namespace nyxWM
             path.AddArc(rect.Left, rect.Bottom - diameter, diameter, diameter, 90f, 90f);
             path.CloseFigure();
             return path;
+        }
+
+        public void Dispose()
+        {
+            _nameFont.Dispose();
+            _metaFont.Dispose();
+            _badgeFont.Dispose();
+            _iconFont.Dispose();
+            _pinMenu.Dispose();
+            _menuFont.Dispose();
+
+            foreach (Bitmap? image in _iconCache.Values)
+                image?.Dispose();
+
+            _iconCache.Clear();
         }
     }
 }

@@ -13,15 +13,19 @@ namespace nyxWM
     {
         private static RofiMenuWindow? _window;
         private static Action<bool>? _setCameraSuspended;
+        private static Func<bool>? _isGameModeActive;
+        private static Func<bool>? _isCameraMoving;
 
         internal static bool IsOpen => _window != null;
 
         /// <summary>
         /// Supplies the camera suspension switch. Safe to call once at startup.
         /// </summary>
-        internal static void Initialize(Action<bool> setCameraSuspended)
+        internal static void Initialize(Action<bool> setCameraSuspended, Func<bool> isGameModeActive, Func<bool> isCameraMoving)
         {
             _setCameraSuspended = setCameraSuspended ?? throw new ArgumentNullException(nameof(setCameraSuspended));
+            _isGameModeActive = isGameModeActive ?? throw new ArgumentNullException(nameof(isGameModeActive));
+            _isCameraMoving = isCameraMoving ?? throw new ArgumentNullException(nameof(isCameraMoving));
 
             // Scan the Start Menu now, so the first hotkey press opens instantly.
             RofiAppCatalog.Prefetch();
@@ -43,7 +47,7 @@ namespace nyxWM
 
         /// <summary>
         /// Opens the menu in the centre of the primary screen. Does nothing while
-        /// the settings window is open.
+        /// the settings window is open or game mode is active.
         /// </summary>
         internal static void Show()
         {
@@ -56,8 +60,18 @@ namespace nyxWM
             if (SettingsWindowService.IsOpen)
                 return;
 
+            if (IsCameraMoving())
+                return;
+
+            if (IsGameModeActive())
+                return;
+
             try
             {
+                // Freeze camera BEFORE constructing the window so the backdrop
+                // capture captures a stable desktop, not a mid-pan frame.
+                _setCameraSuspended?.Invoke(true);
+
                 NotificationTheme theme = NotificationThemeResolver.Resolve(
                     ConfigManager.GetLiveTheme(),
                     ConfigManager.Current.ThemeMode);
@@ -72,9 +86,6 @@ namespace nyxWM
                     _setCameraSuspended?.Invoke(false);
                 };
 
-                // Freeze camera panning while the overlay is open, like the
-                // settings window does.
-                _setCameraSuspended?.Invoke(true);
                 window.Show();
             }
             catch (Exception ex)
@@ -108,6 +119,32 @@ namespace nyxWM
 
             window.Close();
             window.Dispose();
+        }
+
+        private static bool IsCameraMoving()
+        {
+            try
+            {
+                return _isCameraMoving?.Invoke() ?? false;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"RofiMenuService: camera probe failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static bool IsGameModeActive()
+        {
+            try
+            {
+                return _isGameModeActive?.Invoke() ?? false;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"RofiMenuService: game mode probe failed: {ex.Message}");
+                return false;
+            }
         }
 
         private static float GetDpiScale()

@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using nyxWM.Nx;
 
 namespace nyxWM
 {
@@ -112,6 +113,35 @@ namespace nyxWM
                 Color.White);
         }
 
+        /// <summary>
+        /// Builds the window palette from the .nx theme, so the settings window,
+        /// the Rofi menu, the launcher and notifications all follow the same file
+        /// as the .nx surfaces. Field and control colours are derived, since the
+        /// theme describes surfaces rather than every control.
+        /// </summary>
+        internal static NotificationTheme FromNx(string name, Color accent, NxTheme nx, bool isLight)
+        {
+            NxSurfaceColors surface = nx.ForMode(isLight);
+
+            return new NotificationTheme(
+                name,
+                accent,
+                isLight,
+                surface.Top,
+                surface.Bottom,
+                surface.Stroke,
+                surface.Foreground,
+                surface.Muted,
+                OnAccentFor(accent),
+                isLight ? Color.FromArgb(255, 255, 255) : Blend(surface.Top, accent, 0.06f),
+                isLight ? Color.FromArgb(40, 20, 22, 28) : Color.FromArgb(58, 235, 238, 245),
+                isLight ? Color.FromArgb(203, 208, 218) : Color.FromArgb(62, 66, 78),
+                isLight ? Color.FromArgb(255, 255, 255) : Color.FromArgb(242, 244, 250),
+                isLight ? Color.FromArgb(255, 255, 255) : surface.Top,
+                isLight ? Color.FromArgb(26, 20, 22, 28) : surface.Stroke,
+                isLight ? Color.Black : Color.White);
+        }
+
         private static Color OnAccentFor(Color accent)
         {
             double luminance = (0.2126 * accent.R + 0.7152 * accent.G + 0.0722 * accent.B) / 255.0;
@@ -136,7 +166,8 @@ namespace nyxWM
     /// <summary>
     /// Resolves the "Theme" accent and "ThemeMode" values into a palette.
     /// Accents: White, Black, Red, Blue (default), Orange, Green, Purple,
-    /// Cyan and Pink. Legacy names are migrated onto the nearest accent.
+    /// Cyan, Pink and Custom. "Custom" reads the accent from the active
+    /// .nx theme file. Legacy names are migrated onto the nearest accent.
     /// Unknown values fall back to Blue.
     /// </summary>
     internal static class NotificationThemeResolver
@@ -145,11 +176,23 @@ namespace nyxWM
 
         internal static NotificationTheme Resolve(string? value, string? mode = null)
         {
-            TryMap(Normalize(value), out string name, out Color accent);
-            return NotificationTheme.Create(
-                name,
-                accent,
-                VisualPreferences.NormalizeMode(mode) == VisualPreferences.ModeLight);
+            TryMap(Normalize(value), out string name, out _);
+            bool isLight = VisualPreferences.NormalizeMode(mode) == VisualPreferences.ModeLight;
+
+            // The theme owns the palette. "accent: auto" in theme.nx already
+            // resolves to the accent picked in settings, so both paths agree.
+            // When "Custom" is selected the accent comes from the .nx file.
+            return NotificationTheme.FromNx(name, NxTheme.Current.Accent, NxTheme.Current, isLight);
+        }
+
+        /// <summary>
+        /// The concrete colour behind a stored accent name. Used where a caller
+        /// needs the colour itself rather than a whole palette.
+        /// </summary>
+        internal static Color ResolveAccentColor(string? value)
+        {
+            TryMap(Normalize(value), out _, out Color accent);
+            return accent;
         }
 
         internal static bool IsKnown(string? value)
@@ -216,6 +259,10 @@ namespace nyxWM
                 case "pink":
                     name = "Pink";
                     accent = Color.FromArgb(244, 114, 182);
+                    return true;
+                case "custom":
+                    name = "Custom";
+                    accent = Color.FromArgb(59, 130, 246);
                     return true;
                 default:
                     name = DefaultAccentName;

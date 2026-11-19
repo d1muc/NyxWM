@@ -304,6 +304,12 @@ namespace nyxWM
             if (WinApi.GetWindowTextLength(hWnd) == 0)
                 return false;
 
+            // Overlay windows (bars, menus, notifications, launcher, settings)
+            // use WS_EX_TOOLWINDOW and must stay fixed, not moved by the camera.
+            int exStyle = WinApi.GetWindowLong(hWnd, WinApi.GWL_EXSTYLE);
+            if ((exStyle & WinApi.WS_EX_TOOLWINDOW) != 0)
+                return false;
+
             WinApi.GetClassName(hWnd, classNameBuffer, classNameBuffer.Capacity);
             return !IsIgnoredWindow(classNameBuffer.ToString());
         }

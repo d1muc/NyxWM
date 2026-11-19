@@ -20,6 +20,8 @@ namespace nyxWM.Nx
     {
         private readonly string[] _directories;
         private readonly NxDataRegistry _registry;
+        private readonly string? _fallbackTheme;
+        private readonly Color _autoAccent;
         private readonly List<NxSurfaceWindow> _windows = new();
         private readonly List<FileSystemWatcher> _watchers = new();
         private readonly List<string> _loadedFiles = new();
@@ -36,9 +38,11 @@ namespace nyxWM.Nx
         /// <summary>The runtime the widgets talk back to.</summary>
         internal static NxRuntime? Current { get; private set; }
 
-        internal NxRuntime(params string[] directories)
+        internal NxRuntime(string[] directories, string? fallbackTheme = null, Color? autoAccent = null)
         {
             _directories = directories;
+            _fallbackTheme = string.IsNullOrWhiteSpace(fallbackTheme) ? null : fallbackTheme;
+            _autoAccent = autoAccent ?? Color.FromArgb(59, 130, 246);
             _registry = new NxDataRegistry();
             _evaluator = new NxExpressionEvaluator(_registry);
         }
@@ -48,6 +52,28 @@ namespace nyxWM.Nx
         internal IReadOnlyList<string> LoadedFiles => _loadedFiles;
 
         internal int SurfaceCount => _windows.Count;
+
+        /// <summary>Hides or shows every surface without destroying them.</summary>
+        internal void SetGameMode(bool active)
+        {
+            foreach (NxSurfaceWindow window in _windows)
+            {
+                if (window.IsDisposed)
+                    continue;
+
+                try
+                {
+                    if (active)
+                        window.Hide();
+                    else
+                        window.Show();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"nx: game mode toggle failed: {ex.Message}");
+                }
+            }
+        }
 
         /// <summary>Loads every document and starts the frame loop.</summary>
         internal void Start()
@@ -220,6 +246,10 @@ namespace nyxWM.Nx
                 }
             }
 
+            // "accent: auto" must become a real colour before the widgets resolve
+            // $accent, so the surfaces and the WinForms overlays agree.
+            NxTheme.ApplyAutoAccent(tokens, _autoAccent);
+
             _evaluator = new NxExpressionEvaluator(_registry, tokens);
 
             _windows.Clear();
@@ -281,6 +311,23 @@ namespace nyxWM.Nx
             catch (Exception ex)
             {
                 Console.WriteLine($"nx: {Path.GetFileName(path)}: {ex.Message}");
+
+                // A broken theme.nx falls back to the copy compiled into the
+                // exe, so the interface keeps its palette instead of losing the
+                // tokens every other document references.
+                if (_fallbackTheme != null &&
+                    string.Equals(Path.GetFileName(path), "theme.nx", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        return NxParser.Parse(_fallbackTheme, "theme.nx (embedded)");
+                    }
+                    catch (Exception fallbackEx)
+                    {
+                        Console.WriteLine($"nx: embedded theme failed: {fallbackEx.Message}");
+                    }
+                }
+
                 return null;
             }
         }

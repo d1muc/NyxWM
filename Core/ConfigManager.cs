@@ -726,9 +726,16 @@ namespace nyxWM
 
         /// <summary>
         /// Accent theme: White, Black, Red, Blue (default), Orange, Green,
-        /// Purple, Cyan or Pink. Legacy names are migrated automatically.
+        /// Purple, Cyan, Pink or Custom. "Custom" reads the accent from the
+        /// active .nx theme file. Legacy names are migrated automatically.
         /// </summary>
         public string? Theme { get; set; }
+
+        /// <summary>
+        /// The .nx file in the themes/ directory used as the main theme.
+        /// Default: "theme.nx".
+        /// </summary>
+        public string ThemeFile { get; set; } = "theme.nx";
 
         /// <summary>
         /// UI mode: "Dark" (default) or "Light".

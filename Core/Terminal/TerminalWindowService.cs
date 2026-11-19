@@ -17,6 +17,7 @@ namespace nyxWM
 
         private static Action? _invalidateWindowCache;
         private static Action<IntPtr>? _requestCenter;
+        private static Func<bool>? _isGameModeActive;
         private static int _cascadeIndex;
 
         /// <summary>
@@ -27,19 +28,26 @@ namespace nyxWM
         /// </summary>
         internal static void Initialize(
             Action invalidateWindowCache,
-            Action<IntPtr> requestCenter)
+            Action<IntPtr> requestCenter,
+            Func<bool> isGameModeActive)
         {
             _invalidateWindowCache = invalidateWindowCache
                 ?? throw new ArgumentNullException(nameof(invalidateWindowCache));
             _requestCenter = requestCenter
                 ?? throw new ArgumentNullException(nameof(requestCenter));
+            _isGameModeActive = isGameModeActive
+                ?? throw new ArgumentNullException(nameof(isGameModeActive));
         }
 
         /// <summary>
         /// Opens a new terminal window, cascaded from the previous one.
+        /// Does nothing when game mode is active.
         /// </summary>
         internal static void OpenNew()
         {
+            if (IsGameModeActive())
+                return;
+
             try
             {
                 NotificationTheme theme = NotificationThemeResolver.Resolve(
@@ -145,6 +153,19 @@ namespace nyxWM
             }
 
             _invalidateWindowCache?.Invoke();
+        }
+
+        private static bool IsGameModeActive()
+        {
+            try
+            {
+                return _isGameModeActive?.Invoke() ?? false;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"TerminalWindowService: game mode probe failed: {ex.Message}");
+                return false;
+            }
         }
 
         private static float GetDpiScale()

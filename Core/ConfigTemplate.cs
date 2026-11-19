@@ -109,9 +109,14 @@ namespace nyxWM
   "ThemeMode": "Dark",
 
   // Accent colour of the interface and notification cards.
-  // Options: White, Black, Red, Blue (default), Orange, Green, Purple, Cyan, Pink.
+  // Options: White, Black, Red, Blue (default), Orange, Green, Purple, Cyan, Pink,
+  //          Custom (reads the accent from the active .nx theme file).
   // Case-insensitive. Unknown value falls back to Blue.
   "Theme": "Blue",
+
+  // The .nx file in the themes/ folder used as the main theme.
+  // Default: "theme.nx". Create copies to switch themes quickly.
+  "ThemeFile": "theme.nx",
 
   // Blur the desktop behind the Rofi overlay. false = solid surface.
   "GlassEnabled": true,
@@ -293,9 +298,14 @@ namespace nyxWM
             sb.AppendLine($"  \"ThemeMode\": {Str(settings.ThemeMode)},");
             sb.AppendLine();
             sb.AppendLine("  // Accent colour of the interface and notification cards.");
-            sb.AppendLine("  // Options: White, Black, Red, Blue (default), Orange, Green, Purple, Cyan, Pink.");
+            sb.AppendLine("  // Options: White, Black, Red, Blue (default), Orange, Green, Purple, Cyan, Pink,");
+            sb.AppendLine("  //          Custom (reads the accent from the active .nx theme file).");
             sb.AppendLine("  // Case-insensitive. Unknown value falls back to Blue.");
             sb.AppendLine($"  \"Theme\": {Str(settings.Theme)},");
+            sb.AppendLine();
+            sb.AppendLine("  // The .nx file in the themes/ folder used as the main theme.");
+            sb.AppendLine("  // Default: \"theme.nx\". Create copies to switch themes quickly.");
+            sb.AppendLine($"  \"ThemeFile\": {Str(settings.ThemeFile)},");
             sb.AppendLine();
             sb.AppendLine("  // Blur the desktop behind the Rofi overlay. false = solid surface.");
             sb.AppendLine($"  \"GlassEnabled\": {Bool(settings.GlassEnabled)},");

@@ -10,6 +10,7 @@ namespace nyxWM
     {
         private static SettingsWindow? _window;
         private static Action<bool>? _setCameraSuspended;
+        private static Func<bool>? _isGameModeActive;
 
         internal static bool IsOpen => _window != null;
 
@@ -17,14 +18,16 @@ namespace nyxWM
         /// Supplies the camera suspension switch (true while settings are open,
         /// so dragging cannot pan the desktop behind the window).
         /// </summary>
-        internal static void Initialize(Action<bool> setCameraSuspended)
+        internal static void Initialize(Action<bool> setCameraSuspended, Func<bool> isGameModeActive)
         {
             _setCameraSuspended = setCameraSuspended ?? throw new ArgumentNullException(nameof(setCameraSuspended));
+            _isGameModeActive = isGameModeActive ?? throw new ArgumentNullException(nameof(isGameModeActive));
         }
 
         /// <summary>
         /// Opens the settings window in the centre of the primary screen, or
         /// brings the existing window to the front when one is already open.
+        /// Does nothing when game mode is active.
         /// </summary>
         internal static void Show()
         {
@@ -33,6 +36,9 @@ namespace nyxWM
                 _window.Activate();
                 return;
             }
+
+            if (IsGameModeActive())
+                return;
 
             try
             {
@@ -73,7 +79,31 @@ namespace nyxWM
         }
 
         /// <summary>
-        /// Closes the settings window if it is open. Safe to call multiple times.
+        /// Closes the settings window if it is open. Unlike Shutdown this does
+        /// not touch the camera suspension, so it is safe to call during game mode.
+        /// Safe to call multiple times.
+        /// </summary>
+        internal static void Close()
+        {
+            SettingsWindow? window = _window;
+            _window = null;
+
+            if (window == null || window.IsDisposed)
+                return;
+
+            try
+            {
+                window.Close();
+                window.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SettingsWindowService: close failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Closes the settings window and resumes camera panning. Safe to call multiple times.
         /// </summary>
         internal static void Shutdown()
         {
@@ -87,6 +117,19 @@ namespace nyxWM
 
             window.Close();
             window.Dispose();
+        }
+
+        private static bool IsGameModeActive()
+        {
+            try
+            {
+                return _isGameModeActive?.Invoke() ?? false;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SettingsWindowService: game mode probe failed: {ex.Message}");
+                return false;
+            }
         }
 
         private static float GetDpiScale()

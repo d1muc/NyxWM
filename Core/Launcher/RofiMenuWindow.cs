@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -10,17 +11,30 @@ using System.Windows.Forms;
 
 namespace nyxWM
 {
-    /// <summary>
-    /// Borderless Rofi-style application menu. The desktop behind the window is
-    /// captured and blurred to fake a glass backdrop, the card fades and scales
-    /// in, and the selection pill glides between rows. The search field keeps
-    /// focus so typing filters immediately.
-    /// </summary>
     internal sealed class RofiMenuWindow : Form
     {
         private const int WS_EX_TOOLWINDOW = 0x00000080;
-        private const int CS_DROPSHADOW = 0x00020000;
+        private const int WS_EX_NOACTIVATE = 0x08000000;
 
+        private const int WM_CHAR = 0x0102;
+        private const int WM_KEYDOWN = 0x0100;
+        private const int WM_SYSKEYDOWN = 0x0104;
+        private const int WM_MOUSEMOVE = 0x0200;
+        private const int WM_LBUTTONDOWN = 0x0201;
+        private const int WM_LBUTTONUP = 0x0202;
+        private const int WM_RBUTTONDOWN = 0x0204;
+        private const int WM_RBUTTONUP = 0x0205;
+        private const int WM_MOUSEWHEEL = 0x020A;
+        private const int WM_MOUSELEAVE = 0x02A3;
+        private const int WM_MOUSEACTIVATE = 0x0021;
+        private const int WM_SETCURSOR = 0x0020;
+        private const int WM_NCCALCSIZE = 0x0083;
+        private const int WM_NCPAINT = 0x0085;
+
+        private const int DwmwaWindowCornerPreference = 33;
+        private const int DwmcpDoNotRound = 1;
+
+        private const int MA_NOACTIVATE = 3;
         private const int VK_LBUTTON = 0x01;
         private const int VK_RBUTTON = 0x02;
         private const int VK_MBUTTON = 0x04;
@@ -33,15 +47,16 @@ namespace nyxWM
         private const float GapDip = 10f;
         private const float FooterHeightDip = 52f;
 
-        private const float EntryDurationMs = 300f;
-        private const float ExitDurationMs = 200f;
-        private const float EntryStartScale = 0.95f;
-        private const float ExitEndScale = 0.985f;
-        private const float EntrySlideDip = 16f;
-        private const float ExitSlideDip = 8f;
+        private const float EntryDurationMs = 360f;
+        private const float ExitDurationMs = 250f;
+        private const float EntryStartScale = 0.90f;
+        private const float ExitEndScale = 0.91f;
+        private const float EntrySlideDip = 12f;
+        private const float ExitSlideDip = 6f;
 
         private readonly NotificationTheme _theme;
         private readonly float _scale;
+
         private readonly int _baseWidth;
         private readonly int _baseHeight;
         private readonly int _baseX;
@@ -49,23 +64,33 @@ namespace nyxWM
 
         private readonly Font _searchFont;
         private readonly Font _badgeFont;
-        private readonly TextBox _search;
         private readonly RofiAppList _list;
         private Action? _unsubscribe;
         private int _frameInFlight;
         private readonly Color _fieldColor;
         private readonly bool _glass;
         private readonly bool _animations;
-        private readonly float _windowOpacity;
         private readonly float _cornerRadiusDip;
 
         private RectangleF _searchRect;
         private RectangleF _footerRect;
 
+        // Search state
+        private string _searchText = "";
+        private int _caretIndex;
+        private int _selectionLength;
+
         private Bitmap? _backdrop;
         private float _elapsedMs;
         private float _closeElapsedMs;
         private bool _closing;
+        private float _visualScale = 1f;
+        private float _slideOffset;
+
+        // Layered-window rendering
+        private Bitmap? _buffer;
+        private int _renderStamp = -1;
+        private float _opacity = 1f;
 
         internal RofiMenuWindow(NotificationTheme theme, float scale)
         {
@@ -73,7 +98,7 @@ namespace nyxWM
             _scale = Math.Clamp(scale, 0.75f, 3f);
 
             Rectangle work = Screen.PrimaryScreen?.WorkingArea
-                             ?? new Rectangle(0, 0, 1920, 1080);
+                             ?? new Rectangle(0, 0, 1920,1080);
 
             _baseWidth = Math.Max(1, (int)MathF.Round(MathF.Min(
                 BaseWidthDip * _scale,
@@ -84,66 +109,39 @@ namespace nyxWM
 
             _baseX = work.Left + (work.Width - _baseWidth) / 2;
             _baseY = work.Top + (work.Height - _baseHeight) / 2;
-
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
             ShowInTaskbar = false;
             TopMost = true;
-            BackColor = _theme.BackgroundTop;
-            DoubleBuffered = true;
+            DoubleBuffered = false;
             Text = "Rofi menu";
-            SetStyle(
-                ControlStyles.AllPaintingInWmPaint |
-                ControlStyles.OptimizedDoubleBuffer |
-                ControlStyles.UserPaint,
-                true);
-
-            Size = new Size(_baseWidth, _baseHeight);
-            Location = new Point(_baseX, _baseY);
 
             _glass = VisualPreferences.GlassEnabled;
             _animations = VisualPreferences.SmoothAnimations;
-            _windowOpacity = VisualPreferences.WindowOpacity;
             _cornerRadiusDip = VisualPreferences.CornerRadius(CornerRadiusDip);
 
-            Opacity = _animations ? 0.0 : _windowOpacity;
+            _backdrop = _glass ? CaptureBackdrop() : null;
+
+            _opacity = _animations ? 0f : 1f;
+
+            if (_animations)
+                _visualScale = EntryStartScale;
 
             _fieldColor = _theme.FieldBackground;
 
             _searchFont = VisualPreferences.CreateUiFont("Segoe UI", 11f, FontStyle.Regular);
             _badgeFont = VisualPreferences.CreateUiFont("Segoe UI", 7.75f, FontStyle.Regular);
 
-            _search = new TextBox
-            {
-                AutoSize = false,
-                BorderStyle = BorderStyle.None,
-                BackColor = _fieldColor,
-                ForeColor = _theme.TextPrimary,
-                Font = _searchFont,
-                PlaceholderText = "Search apps or type command...",
-                ShortcutsEnabled = true
-            };
-
-            _search.TextChanged += (_, _) =>
-            {
-                ApplyFilter();
-                Invalidate();
-            };
-
-            _search.KeyDown += OnSearchKeyDown;
-            _search.GotFocus += (_, _) => Invalidate();
-            _search.LostFocus += (_, _) => Invalidate();
+            Size = new Size(_baseWidth, _baseHeight);
+            Location = new Point(_baseX, _baseY);
 
             _list = new RofiAppList(_theme, _scale);
             _list.ItemActivated += OnItemActivated;
             _list.PinsChanged += () => ApplyFilter(preserveSelection: true);
-
-            Controls.Add(_list);
-            Controls.Add(_search);
+            _list.Invalidated += () => Invalidate();
 
             ApplyFilter();
-            ApplyLayout(_animations ? EntryStartScale : 1f, 0f);
-
+            ApplyScaledLayout(_visualScale, _animations ? EntrySlideDip * _scale : 0f);
         }
 
         internal bool IsClosing => _closing;
@@ -153,11 +151,15 @@ namespace nyxWM
             get
             {
                 CreateParams parameters = base.CreateParams;
-                parameters.ExStyle |= WS_EX_TOOLWINDOW;
-                parameters.ClassStyle |= CS_DROPSHADOW;
+                parameters.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | LayeredWindow.WS_EX_LAYERED;
                 return parameters;
             }
         }
+
+        protected override bool ShowWithoutActivation => true;
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -165,632 +167,694 @@ namespace nyxWM
         [DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int virtualKey);
 
-        protected override void OnShown(EventArgs e)
+        protected override void OnHandleCreated(EventArgs e)
         {
-            base.OnShown(e);
+            base.OnHandleCreated(e);
 
-            // The entry animation runs before the window is shown on the UI thread.
-            UiAnimationHost.RequestActivity();
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+            {
+                try
+                {
+                    int preference = DwmcpDoNotRound;
+                    DwmSetWindowAttribute(Handle, DwmwaWindowCornerPreference, ref preference, sizeof(int));
+                }
+                catch { }
+            }
 
-            _backdrop = _glass ? CaptureBackdrop() : null;
-
-            if (!_animations)
-                _elapsedMs = EntryDurationMs;
-
-            // The shared frame clock drives the entry, hover and exit phases.
-            _unsubscribe = UiAnimationHost.Subscribe(
-                dtMs => AdvanceFrame(dtMs),
-                () => RepaintIfAnimated());
-
-            Activate();
-            SetForegroundWindow(Handle);
-            _search.Focus();
+            ApplyLayered();
         }
 
-        protected override void OnActivated(EventArgs e)
+        protected override void OnSizeChanged(EventArgs e)
         {
-            base.OnActivated(e);
-
-            if (!_closing)
-                _search.Focus();
-
-            Invalidate();
+            base.OnSizeChanged(e);
+            if (IsHandleCreated)
+                ApplyLayered();
         }
 
-        protected override void OnDeactivate(EventArgs e)
+        protected override void OnPaintBackground(PaintEventArgs e)
         {
-            base.OnDeactivate(e);
-
-            // Clicks outside the menu dismiss it, like Rofi. Keyboard-driven
-            // focus changes, such as switching the keyboard layout, must not
-            // close the menu. The short guard ignores the deactivation that can
-            // happen while the window is still appearing. The pin popup is part
-            // of the menu, so it must not dismiss it either.
-            if (!_closing
-                && _elapsedMs > 140f
-                && !_list.IsPinMenuOpen
-                && IsMouseButtonDown())
-                BeginClose();
-        }
-
-        private static bool IsMouseButtonDown()
-        {
-            return (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0
-                   || (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0
-                   || (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            base.OnPaint(e);
-
-            Graphics graphics = e.Graphics;
-            graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-            graphics.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
-
-            float borderWidth = MathF.Max(1f, _scale);
-            var cardRect = new RectangleF(
-                borderWidth / 2f,
-                borderWidth / 2f,
-                Width - borderWidth,
-                Height - borderWidth);
-
-            if (cardRect.Width <= 0f || cardRect.Height <= 0f)
-                return;
-
-            using GraphicsPath cardPath = CreateRoundedPath(cardRect, _cornerRadiusDip * _scale);
-
-            DrawGlass(graphics, cardRect, cardPath);
-            DrawAccentGlow(graphics);
-            DrawSearchField(graphics);
-            DrawFooter(graphics);
-
-            Color borderColor = _theme.IsLight
-                ? Color.FromArgb(28, 20, 22, 28)
-                : Color.FromArgb(20, 255, 255, 255);
-
-            using var border = new Pen(borderColor, borderWidth);
-            graphics.DrawPath(border, cardPath);
+            ApplyLayered();
         }
 
-        private void DrawGlass(Graphics graphics, RectangleF cardRect, GraphicsPath cardPath)
+        protected override void WndProc(ref Message m)
         {
+            switch (m.Msg)
+            {
+                case WM_NCPAINT:
+                    return;
+
+                case WM_NCCALCSIZE when m.WParam != IntPtr.Zero:
+                    m.Result = IntPtr.Zero;
+                    return;
+
+                case WM_CHAR:
+                    HandleChar((char)m.WParam);
+                    return;
+
+                case WM_KEYDOWN:
+                case WM_SYSKEYDOWN:
+                    HandleKeyDown((Keys)m.WParam, m.LParam);
+                    return;
+
+                case WM_MOUSEMOVE:
+                    HandleMouseMove(GetMouseX(m.LParam), GetMouseY(m.LParam));
+                    return;
+
+                case WM_LBUTTONDOWN:
+                    HandleMouseDown(GetMouseX(m.LParam), GetMouseY(m.LParam), MouseButtons.Left);
+                    return;
+
+                case WM_LBUTTONUP:
+                    HandleMouseUp(GetMouseX(m.LParam), GetMouseY(m.LParam), MouseButtons.Left);
+                    return;
+
+                case WM_RBUTTONDOWN:
+                    HandleMouseDown(GetMouseX(m.LParam), GetMouseY(m.LParam), MouseButtons.Right);
+                    return;
+
+                case WM_RBUTTONUP:
+                    HandleMouseUp(GetMouseX(m.LParam), GetMouseY(m.LParam), MouseButtons.Right);
+                    return;
+
+                case WM_MOUSEWHEEL:
+                    HandleMouseWheel(m);
+                    return;
+
+                case WM_MOUSELEAVE:
+                    if (_list.ClearHover())
+                        Invalidate();
+                    return;
+
+                case WM_MOUSEACTIVATE:
+                    m.Result = (IntPtr)MA_NOACTIVATE;
+                    return;
+
+                case WM_SETCURSOR:
+                    {
+                        Point client = PointToClient(Cursor.Position);
+                        if (_list.HitTest(client.Y) >= 0)
+                        {
+                            Cursor.Current = Cursors.Hand;
+                            return;
+                        }
+                    }
+                    break;
+            }
+
+            base.WndProc(ref m);
+        }
+
+        private static int GetMouseX(IntPtr lParam) => (short)(lParam.ToInt32() & 0xFFFF);
+        private static int GetMouseY(IntPtr lParam) => (short)((lParam.ToInt32() >> 16) & 0xFFFF);
+
+        private void HandleChar(char c)
+        {
+            if (c <' ' && c != '\t')
+                return;
+
+            if (_selectionLength >0)
+                DeleteSelection();
+
+            _searchText = _searchText.Insert(_caretIndex, c.ToString());
+            _caretIndex++;
+            ApplyFilter();
+        }
+
+        private void HandleKeyDown(Keys key, IntPtr lParam)
+        {
+            bool ctrl = (ModifierKeys & Keys.Control) != 0;
+            bool shift = (ModifierKeys & Keys.Shift) != 0;
+
+            switch (key)
+            {
+                case Keys.Back:
+                    if (_selectionLength >0)
+                        DeleteSelection();
+                    else if (_caretIndex >0)
+                    {
+                        _caretIndex--;
+                        _searchText = _searchText.Remove(_caretIndex, 1);
+                    }
+                    ApplyFilter();
+                    return;
+
+                case Keys.Delete:
+                    if (_selectionLength >0)
+                        DeleteSelection();
+                    else if (_caretIndex < _searchText.Length)
+                        _searchText = _searchText.Remove(_caretIndex, 1);
+                    ApplyFilter();
+                    return;
+
+                case Keys.Left:
+                    if (ctrl)
+                        _caretIndex = PrevWordBoundary(_caretIndex);
+                    else if (_caretIndex >0)
+                        _caretIndex--;
+                    if (!shift) _selectionLength =0;
+                    return;
+
+                case Keys.Right:
+                    if (ctrl)
+                        _caretIndex = NextWordBoundary(_caretIndex);
+                    else if (_caretIndex < _searchText.Length)
+                        _caretIndex++;
+                    if (!shift) _selectionLength =0;
+                    return;
+
+                case Keys.Home:
+                    _caretIndex =0;
+                    if (!shift) _selectionLength =0;
+                    return;
+
+                case Keys.End:
+                    _caretIndex = _searchText.Length;
+                    if (!shift) _selectionLength =0;
+                    return;
+
+                case Keys.A when ctrl:
+                    _caretIndex =0;
+                    _selectionLength = _searchText.Length;
+                    return;
+
+                case Keys.C when ctrl:
+                    if (_selectionLength >0)
+                        Clipboard.SetText(GetSelectedText());
+                    return;
+
+                case Keys.V when ctrl:
+                    string? pasteText = Clipboard.GetText();
+                    if (!string.IsNullOrEmpty(pasteText))
+                    {
+                        if (_selectionLength >0) DeleteSelection();
+                        _searchText = _searchText.Insert(_caretIndex, pasteText);
+                        _caretIndex += pasteText.Length;
+                        ApplyFilter();
+                    }
+                    return;
+
+                case Keys.X when ctrl:
+                    if (_selectionLength >0)
+                    {
+                        Clipboard.SetText(GetSelectedText());
+                        DeleteSelection();
+                        ApplyFilter();
+                    }
+                    return;
+
+                case Keys.Down:
+                    _list.MoveSelection(1);
+                    return;
+
+                case Keys.Up:
+                    _list.MoveSelection(-1);
+                    return;
+
+                case Keys.PageDown:
+                    _list.MoveSelection(_list.VisibleRows());
+                    return;
+
+                case Keys.PageUp:
+                    _list.MoveSelection(-_list.VisibleRows());
+                    return;
+
+                case Keys.Tab:
+                    _list.MoveSelection(shift ? -1 :1);
+                    return;
+
+                case Keys.Enter:
+                    if (_list.HasSelection)
+                        _list.ActivateSelected(ctrl);
+                    return;
+
+                case Keys.Escape:
+                    BeginClose();
+                    return;
+            }
+        }
+
+        private void DeleteSelection()
+        {
+            if (_selectionLength ==0) return;
+            int start = Math.Min(_caretIndex, _caretIndex + _selectionLength);
+            int len = Math.Abs(_selectionLength);
+            _searchText = _searchText.Remove(start, len);
+            _caretIndex = start;
+            _selectionLength =0;
+        }
+
+        private string GetSelectedText()
+        {
+            int start = Math.Min(_caretIndex, _caretIndex + _selectionLength);
+            int len = Math.Abs(_selectionLength);
+            return _searchText.Substring(start, len);
+        }
+
+        private int PrevWordBoundary(int from)
+        {
+            int i = Math.Min(from -1, _searchText.Length -1);
+            while (i >=0 && _searchText[i] ==' ') i--;
+            while (i >=0 && _searchText[i] !=' ') i--;
+            return Math.Max(0, i +1);
+        }
+
+        private int NextWordBoundary(int from)
+        {
+            int i = from;
+            while (i < _searchText.Length && _searchText[i] !=' ') i++;
+            while (i < _searchText.Length && _searchText[i] ==' ') i++;
+            return Math.Min(_searchText.Length, i);
+        }
+
+        private void HandleMouseMove(int x, int y)
+        {
+            if (IsOutsideListArea(x, y))
+            {
+                if (_list.ClearHover()) Invalidate();
+                return;
+            }
+
+            int listY = MapToListY(y);
+            if (_list.SetHover(listY)) Invalidate();
+        }
+
+        private void HandleMouseDown(int x, int y, MouseButtons button)
+        {
+            if (_closing) return;
+
+            if (!IsOutsideListArea(x, y) && _list.HitTest(MapToListY(y)) >=0)
+            {
+                _list.HandleMouseDown(MapToListY(y), button, PointToScreen(new Point(x, y)));
+                return;
+            }
+
+            if (IsOutsideCard(x, y))
+                BeginClose();
+        }
+
+        private void HandleMouseUp(int x, int y, MouseButtons button)
+        {
+            if (_closing) return;
+            if (!IsOutsideListArea(x, y))
+                _list.HandleMouseUp(MapToListY(y), button);
+        }
+
+        private void HandleMouseWheel(Message m)
+        {
+            if (_closing) return;
+            int delta = (short)((ulong)m.WParam >>16);
+            Point client = PointToClient(Cursor.Position);
+            _list.HandleMouseWheel(delta, client.Y);
+        }
+
+        private bool IsOutsideCard(int x, int y)
+        {
+            float cw = Width * _visualScale;
+            float ch = Height * _visualScale;
+            float cl = (Width - cw) / 2f;
+            float ct = (Height - ch) / 2f + _slideOffset;
+            return x < cl || x > cl + cw || y < ct || y > ct + ch;
+        }
+
+        private bool IsOutsideListArea(int x, int y)
+        {
+            float listTop = _searchRect.Bottom + GapDip * _scale * _visualScale;
+            float listBottom = _footerRect.Top;
+            float listLeft = _searchRect.Left;
+            float listRight = _searchRect.Right;
+            return x < listLeft || x > listRight || y < listTop || y >= listBottom;
+        }
+
+        private int MapToListY(int y)
+        {
+            float listTop = _searchRect.Bottom + GapDip * _scale * _visualScale;
+            return (int)(y - listTop);
+        }
+
+        private void ApplyFilter(bool preserveSelection = false)
+        {
+            _list.SetItems(
+                RofiSearch.Filter(RofiAppCatalog.GetApps(), _searchText),
+                preserveSelection);
+        }
+
+        private void OnItemActivated(RofiApp app, bool asAdministrator)
+        {
+            if (_closing) return;
+            TryLaunch(app, asAdministrator);
+            BeginClose();
+        }
+
+        // ---- Layered rendering ----
+
+        private void EnsureBufferSize()
+        {
+            if (Width <=0 || Height <=0) return;
+
+            if (_buffer != null && _buffer.Width == Width && _buffer.Height == Height)
+                return;
+
+            Bitmap? prev = _buffer;
+            _buffer = new Bitmap(Width, Height, PixelFormat.Format32bppPArgb);
+            prev?.Dispose();
+            _renderStamp = -1;
+        }
+
+        private int RenderStamp()
+        {
+            int h = _scale.GetHashCode();
+            h = h *31 + _visualScale.GetHashCode();
+            h = h *31 + _slideOffset.GetHashCode();
+            h = h *31 + _searchText.GetHashCode();
+            h = h *31 + _caretIndex.GetHashCode();
+            h = h *31 + _theme.IsLight.GetHashCode();
+            h = h *31 + _list.SelectedIndex.GetHashCode();
+            h = h *31 + _list.HasActiveAnimation.GetHashCode();
+            h = h *31 + (_backdrop != null).GetHashCode();
+            return h;
+        }
+
+        private void RenderIfNeeded()
+        {
+            if (_buffer == null) return;
+            int stamp = RenderStamp();
+            if (stamp == _renderStamp) return;
+            _renderStamp = stamp;
+            using Graphics g = Graphics.FromImage(_buffer);
+            Render(g);
+        }
+
+        private void Render(Graphics g)
+        {
+            g.Clear(Color.Transparent);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
+
+            DrawGlass(g);
+            DrawCardContent(g);
+        }
+
+        private void ApplyLayered()
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            EnsureBufferSize();
+            RenderIfNeeded();
+            if (_buffer == null) return;
+            LayeredWindow.Apply(Handle, _buffer, Left, Top, _opacity);
+        }
+
+        // ---- Glass / backdrop ----
+
+        private void DrawGlass(Graphics g)
+        {
+            var fullRect = new RectangleF(0f, 0f, Width, Height);
+            float cw = Width * _visualScale;
+            float ch = Height * _visualScale;
+            float cl = (Width - cw) / 2f;
+            float ct = (Height - ch) / 2f + _slideOffset;
+            var cardRect = new RectangleF(cl, ct, cw, ch);
+            float radius = _cornerRadiusDip * _scale;
+
+            using GraphicsPath cardPath = CreateRoundedPath(cardRect, radius);
+
             if (_backdrop != null)
             {
-                GraphicsState state = graphics.Save();
-                graphics.SetClip(cardPath);
-                graphics.DrawImage(_backdrop, new Rectangle(0, 0, Width, Height));
-                graphics.Restore(state);
+                GraphicsState state = g.Save();
+                g.SetClip(cardPath);
+                g.DrawImage(_backdrop, new Rectangle(0, 0, Width, Height));
+                g.Restore(state);
 
                 Color tintColor = _theme.IsLight
                     ? Color.FromArgb(226, _theme.BackgroundTop)
                     : Color.FromArgb(214, _theme.BackgroundTop);
 
                 using (var tint = new SolidBrush(tintColor))
-                {
-                    graphics.FillPath(tint, cardPath);
-                }
+                    g.FillPath(tint, cardPath);
 
                 Color shadeBottom = _theme.IsLight
                     ? Color.FromArgb(18, 0, 0, 0)
                     : Color.FromArgb(40, 0, 0, 0);
 
                 using var shade = new LinearGradientBrush(
-                    cardRect,
+                    fullRect,
                     Color.FromArgb(0, 0, 0, 0),
                     shadeBottom,
                     LinearGradientMode.Vertical);
-
-                graphics.FillPath(shade, cardPath);
+                g.FillPath(shade, cardPath);
             }
             else
             {
                 using var fill = new LinearGradientBrush(
-                    cardRect,
+                    fullRect,
                     _theme.BackgroundTop,
                     _theme.BackgroundBottom,
                     LinearGradientMode.Vertical);
 
-                graphics.FillPath(fill, cardPath);
+                using GraphicsPath fullPath = CreateRoundedPath(fullRect, 0f);
+                g.FillPath(fill, fullPath);
             }
         }
 
-        private void DrawAccentGlow(Graphics graphics)
-        {
-            float glowWidth = Width * 0.54f;
-            float glowHeight = Height * 0.30f;
-            int alpha = Math.Clamp((int)(18f + 12f * EntryProgress()), 0, 255);
+        // ---- Card content ----
 
-            using var glow = new SolidBrush(Color.FromArgb(alpha, _theme.Accent));
-            graphics.FillEllipse(
-                glow,
-                (Width - glowWidth) / 2f,
-                -glowHeight * 0.55f,
-                glowWidth,
-                glowHeight);
+        private void DrawCardContent(Graphics g)
+        {
+            float cw = Width * _visualScale;
+            float ch = Height * _visualScale;
+            float cl = (Width - cw) / 2f;
+            float ct = (Height - ch) / 2f + _slideOffset;
+
+            float radius = _cornerRadiusDip * _scale;
+            float bw = MathF.Max(1f, _scale);
+
+            using GraphicsPath cardPath = CreateRoundedPath(
+                new RectangleF(cl + bw / 2f, ct + bw / 2f, cw - bw, ch - bw),
+                radius);
+
+            float pad = PaddingDip * _scale * _visualScale;
+            float sh = SearchHeightDip * _scale * _visualScale;
+            float fh = FooterHeightDip * _scale * _visualScale;
+            float gap = GapDip * _scale * _visualScale;
+
+            var sr = new RectangleF(cl + pad, ct + pad, MathF.Max(1f, cw - pad * 2f), sh);
+            float ft = ct + ch - pad - fh;
+            var fr = new RectangleF(cl + pad, ft, MathF.Max(1f, cw - pad * 2f), fh);
+
+            _searchRect = sr;
+            _footerRect = fr;
+
+            DrawSearchField(g, sr);
+            DrawList(g, sr, ft, gap);
+            DrawFooter(g, fr);
+
+            Color bc = _theme.IsLight
+                ? Color.FromArgb(28, 20, 22, 28)
+                : Color.FromArgb(20, 255, 255, 255);
+
+            using var border = new Pen(bc, bw);
+            g.DrawPath(border, cardPath);
         }
 
-        private void DrawSearchField(Graphics graphics)
+        private void DrawSearchField(Graphics g, RectangleF sr)
         {
-            bool hasText = _search.TextLength > 0;
+            bool hasText = _searchText.Length >0;
 
-            using (GraphicsPath fieldPath = CreateRoundedPath(_searchRect, 12f * _scale))
+            float radius = 12f * _scale * _visualScale;
+            using (GraphicsPath fp = CreateRoundedPath(sr, radius))
             {
-                Color fieldFill = _theme.IsLight
+                Color fill = _theme.IsLight
                     ? Color.FromArgb(150, 255, 255, 255)
                     : Color.FromArgb(18, 255, 255, 255);
 
-                using (var fill = new SolidBrush(fieldFill))
-                {
-                    graphics.FillPath(fill, fieldPath);
-                }
+                using (var b = new SolidBrush(fill))
+                    g.FillPath(b, fp);
 
-                if (_search.Focused)
-                {
-                    using var accentBorder = new Pen(
-                        Color.FromArgb(hasText ? 110 : 64, _theme.Accent),
-                        MathF.Max(1f, 1.1f * _scale));
-
-                    graphics.DrawPath(accentBorder, fieldPath);
-                }
+                using var ab = new Pen(
+                    Color.FromArgb(hasText ? 110 :64, _theme.Accent),
+                    MathF.Max(1f,1.1f * _scale));
+                g.DrawPath(ab, fp);
             }
 
-            float radius = 7.5f * _scale;
-            float centerX = _searchRect.Left + 22f * _scale;
-            float centerY = _searchRect.Top + _searchRect.Height / 2f;
+            float ir = 7.5f * _scale * _visualScale;
+            float cx = sr.Left + 22f * _scale * _visualScale;
+            float cy = sr.Top + sr.Height /2f;
 
-            Color iconColor = hasText
-                ? _theme.Accent
-                : _theme.TextMuted;
+            Color ic = hasText ? _theme.Accent : _theme.TextMuted;
 
-            using var pen = new Pen(iconColor, MathF.Max(1.2f, 1.6f * _scale))
-            {
-                StartCap = LineCap.Round,
-                EndCap = LineCap.Round
-            };
+            using var pen = new Pen(ic, MathF.Max(1.2f,1.6f * _scale))
+            { StartCap = LineCap.Round, EndCap = LineCap.Round };
 
-            graphics.DrawEllipse(pen, centerX - radius, centerY - radius, radius * 2f, radius * 2f);
+            g.DrawEllipse(pen, cx - ir, cy - ir, ir * 2f, ir *2f);
 
-            const float diagonal = 0.70710678f;
-            graphics.DrawLine(
-                pen,
-                centerX + radius * diagonal,
-                centerY + radius * diagonal,
-                centerX + radius * diagonal + radius * 0.85f,
-                centerY + radius * diagonal + radius * 0.85f);
+            const float diag = 0.70710678f;
+            g.DrawLine(pen,
+                cx + ir * diag, cy + ir * diag,
+                cx + ir * diag + ir * 0.85f, cy + ir * diag + ir *0.85f);
+
+            float tl = sr.Left + 44f * _scale * _visualScale;
+            float tt = sr.Top + 3f * _scale * _visualScale;
+            var tr = new RectangleF(tl, tt, MathF.Max(1f, sr.Right - tl -10f * _scale), sr.Height -6f * _scale * _visualScale);
 
             if (hasText)
-            {
-                float lineInset = 16f * _scale;
-                float lineY = _searchRect.Bottom - 5f * _scale;
-
-                using var underline = new Pen(
-                    Color.FromArgb(140, _theme.Accent),
-                    MathF.Max(1f, 1.5f * _scale))
-                {
-                    StartCap = LineCap.Round,
-                    EndCap = LineCap.Round
-                };
-
-                graphics.DrawLine(
-                    underline,
-                    _searchRect.Left + lineInset,
-                    lineY,
-                    _searchRect.Right - lineInset,
-                    lineY);
-            }
+                DrawSearchText(g, tr);
+            else
+                DrawPlaceholder(g, tr);
         }
 
-        private void DrawFooter(Graphics graphics)
+        private void DrawPlaceholder(Graphics g, RectangleF tr)
         {
-            DrawBadgeRow(
-                graphics,
-                new[] { ("↑↓", "Navigate"), ("↵", "Select"), ("RMB", "Pin"), ("ESC", "Close") },
-                _footerRect.Top + 10f * _scale);
-
-            DrawBadgeRow(
-                graphics,
-                new[] { ("Ctrl + Enter", "Open as administrator") },
-                _footerRect.Top + 32f * _scale);
+            using var pb = new SolidBrush(_theme.TextMuted);
+            using var pf = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center };
+            g.DrawString("Search apps or type command...", _searchFont, pb, tr, pf);
         }
 
-        private void DrawBadgeRow(Graphics graphics, (string Key, string Label)[] items, float y)
+        private void DrawSearchText(Graphics g, RectangleF tr)
         {
-            float padX = 7f * _scale;
-            float badgeHeight = 20f * _scale;
-            float keyGap = 7f * _scale;
-            float itemGap = 18f * _scale;
-
-            var keyWidths = new float[items.Length];
-            var labelWidths = new float[items.Length];
-            float total = itemGap * (items.Length - 1);
-
-            for (int i = 0; i < items.Length; i++)
-            {
-                keyWidths[i] = graphics.MeasureString(items[i].Key, _badgeFont).Width + padX * 2f;
-                labelWidths[i] = graphics.MeasureString(items[i].Label, _badgeFont).Width;
-                total += keyWidths[i] + keyGap + labelWidths[i];
-            }
-
-            float x = _footerRect.Left + (_footerRect.Width - total) / 2f;
-
-            using var keyBrush = new SolidBrush(_theme.TextPrimary);
-            using var labelBrush = new SolidBrush(_theme.TextMuted);
-            using var keyFormat = new StringFormat
-            {
-                Alignment = StringAlignment.Center,
-                LineAlignment = StringAlignment.Center
-            };
-            using var labelFormat = new StringFormat
+            using var tb = new SolidBrush(_theme.TextPrimary);
+            using var fmt = new StringFormat
             {
                 Alignment = StringAlignment.Near,
-                LineAlignment = StringAlignment.Center
+                LineAlignment = StringAlignment.Center,
+                Trimming = StringTrimming.None,
+                FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces
             };
 
-            for (int i = 0; i < items.Length; i++)
+            if (_caretIndex >0)
             {
-                var badge = new RectangleF(x, y, keyWidths[i], badgeHeight);
+                string before = _searchText.Substring(0, _caretIndex);
+                g.DrawString(before, _searchFont, tb, tr, fmt);
+            }
 
-                Color badgeFill = _theme.IsLight
+            string beforeCaret = _searchText.Substring(0, _caretIndex);
+            SizeF bs = g.MeasureString(beforeCaret, _searchFont, (int)tr.Width, fmt);
+
+            float cx = tr.Left + bs.Width;
+            float ch = MathF.Min(tr.Height * 0.6f, 22f * _scale * _visualScale);
+            float cy = tr.Top + (tr.Height - ch) /2f;
+
+            using var cp = new Pen(_theme.Accent, MathF.Max(1f,1.2f * _scale));
+            g.DrawLine(cp, cx, cy, cx, cy + ch);
+
+            if (_caretIndex < _searchText.Length)
+            {
+                string after = _searchText.Substring(_caretIndex);
+                var ar = new RectangleF(cx +2f, tr.Top, MathF.Max(1f, tr.Right - cx -4f), tr.Height);
+                g.DrawString(after, _searchFont, tb, ar, fmt);
+            }
+        }
+
+        private void DrawList(Graphics g, RectangleF sr, float footerTop, float gap)
+        {
+            float listTop = sr.Bottom + gap;
+            float listH = MathF.Max(1f, footerTop - listTop - gap);
+
+            _list.SetBounds(MathF.Max(1f, Width * _visualScale - PaddingDip * _scale * _visualScale * 2f), listH);
+
+            GraphicsState state = g.Save();
+            g.TranslateTransform(sr.Left, listTop);
+            _list.Draw(g);
+            g.Restore(state);
+        }
+
+        private void DrawFooter(Graphics g, RectangleF fr)
+        {
+            float by = fr.Top + (FooterHeightDip -20f) * 0.5f * _scale * _visualScale;
+
+            DrawBadgeRow(g,
+                new[] { ("↑↓", "Navigate"), ("↵", "Open"), ("ESC", "Close") },
+                by);
+        }
+
+        private void DrawBadgeRow(Graphics g, (string Key, string Label)[] items, float y)
+        {
+            float px = 7f * _scale * _visualScale;
+            float bh = 20f * _scale * _visualScale;
+            float kg = 7f * _scale * _visualScale;
+            float ig = 18f * _scale * _visualScale;
+
+            var kw = new float[items.Length];
+            var lw = new float[items.Length];
+            float total = ig * (items.Length -1);
+
+            for (int i =0; i < items.Length; i++)
+            {
+                kw[i] = g.MeasureString(items[i].Key, _badgeFont).Width + px *2f;
+                lw[i] = g.MeasureString(items[i].Label, _badgeFont).Width;
+                total += kw[i] + kg + lw[i];
+            }
+
+            float x = _footerRect.Left + (_footerRect.Width - total) /2f;
+
+            using var kb = new SolidBrush(_theme.TextPrimary);
+            using var lb = new SolidBrush(_theme.TextMuted);
+            using var kf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+            using var lf = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center };
+
+            for (int i =0; i < items.Length; i++)
+            {
+                var badge = new RectangleF(x, y, kw[i], bh);
+
+                Color bf = _theme.IsLight
                     ? Color.FromArgb(10, 0, 0, 0)
                     : Color.FromArgb(16, 255, 255, 255);
-                Color badgeBorder = _theme.IsLight
+                Color bb = _theme.IsLight
                     ? Color.FromArgb(26, 0, 0, 0)
                     : Color.FromArgb(26, 255, 255, 255);
 
-                using (GraphicsPath path = CreateRoundedPath(badge, 6f * _scale))
-                using (var fill = new SolidBrush(badgeFill))
+                using (GraphicsPath path = CreateRoundedPath(badge, 6f * _scale * _visualScale))
+                using (var fill = new SolidBrush(bf))
                 {
-                    graphics.FillPath(fill, path);
-
-                    using var border = new Pen(badgeBorder, MathF.Max(1f, _scale));
-                    graphics.DrawPath(border, path);
+                    g.FillPath(fill, path);
+                    using var border = new Pen(bb, MathF.Max(1f, _scale));
+                    g.DrawPath(border, path);
                 }
 
-                graphics.DrawString(items[i].Key, _badgeFont, keyBrush, badge, keyFormat);
-
-                x += keyWidths[i] + keyGap;
-
-                var labelRect = new RectangleF(x, y, labelWidths[i], badgeHeight);
-                graphics.DrawString(items[i].Label, _badgeFont, labelBrush, labelRect, labelFormat);
-
-                x += labelWidths[i] + itemGap;
+                g.DrawString(items[i].Key, _badgeFont, kb, badge, kf);
+                x += kw[i] + kg;
+                var lr = new RectangleF(x, y, lw[i], bh);
+                g.DrawString(items[i].Label, _badgeFont, lb, lr, lf);
+                x += lw[i] + ig;
             }
         }
 
-        private void OnSearchKeyDown(object? sender, KeyEventArgs e)
+        // ---- Layout ----
+
+        private void ApplyScaledLayout(float contentScale, float slide)
         {
-            switch (e.KeyCode)
-            {
-                case Keys.Down:
-                    _list.MoveSelection(1);
-                    break;
-                case Keys.Up:
-                    _list.MoveSelection(-1);
-                    break;
-                case Keys.PageDown:
-                    _list.MoveSelection(_list.VisibleRowCount);
-                    break;
-                case Keys.PageUp:
-                    _list.MoveSelection(-_list.VisibleRowCount);
-                    break;
-                case Keys.Tab:
-                    _list.MoveSelection(e.Shift ? -1 : 1);
-                    break;
-                case Keys.Enter:
-                    if (_list.HasSelection)
-                        _list.ActivateSelected(e.Control);
-                    break;
-                case Keys.Escape:
-                    BeginClose();
-                    break;
-                default:
-                    return;
-            }
+            _visualScale = contentScale;
+            _slideOffset = slide;
 
-            e.Handled = true;
-            e.SuppressKeyPress = true;
-        }
+            float cw = Width * contentScale;
+            float ch = Height * contentScale;
+            float cl = (Width - cw) /2f;
+            float ct = (Height - ch) /2f + slide;
 
-        private void OnItemActivated(RofiApp app, bool asAdministrator)
-        {
-            // A single click and a follow-up double click can both land while
-            // the close animation runs; only the first request may launch.
-            if (_closing)
-                return;
-
-            TryLaunch(app, asAdministrator);
-            BeginClose();
-        }
-
-        private static void TryLaunch(RofiApp app, bool asAdministrator)
-        {
-            if (string.IsNullOrWhiteSpace(app.Path))
-                return;
-
-            try
-            {
-                ProcessStartInfo startInfo = app.Kind == RofiAppKind.Uwp
-                    ? CreateUwpStartInfo(app)
-                    : CreateDesktopStartInfo(app, asAdministrator);
-
-                Process.Start(startInfo);
-            }
-            catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
-            {
-                // The user declined the UAC prompt; that is not an error.
-                Console.WriteLine($"Rofi menu: elevation cancelled for '{app.Name}'.");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Rofi menu: failed to launch '{app.Name}': {ex.Message}");
-            }
-        }
-
-        private static ProcessStartInfo CreateDesktopStartInfo(RofiApp app, bool asAdministrator)
-        {
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = app.Path,
-                UseShellExecute = true
-            };
-
-            if (!string.IsNullOrWhiteSpace(app.Arguments))
-                startInfo.Arguments = app.Arguments;
-
-            if (!string.IsNullOrWhiteSpace(app.WorkingDirectory))
-                startInfo.WorkingDirectory = app.WorkingDirectory;
-
-            if (asAdministrator)
-                startInfo.Verb = "runas";
-
-            return startInfo;
-        }
-
-        private static ProcessStartInfo CreateUwpStartInfo(RofiApp app)
-        {
-            // Store apps cannot be elevated, so Ctrl+Enter launches them
-            // normally instead of failing on an impossible runas request.
-            return new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = $"shell:AppsFolder\\{app.Path}",
-                UseShellExecute = true
-            };
-        }
-
-        private void ApplyFilter(bool preserveSelection = false)
-        {
-            _list.SetItems(
-                RofiSearch.Filter(RofiAppCatalog.GetApps(), _search.Text),
-                preserveSelection);
-        }
-
-        internal void RequestClose()
-        {
-            BeginClose();
-        }
-
-        private void BeginClose()
-        {
-            if (_closing)
-                return;
-
-            if (!_animations)
-            {
-                Unsubscribe();
-                Close();
-                return;
-            }
-
-            _closing = true;
-            _closeElapsedMs = 0f;
-        }
-
-        private void Advance(float dtMs)
-        {
-            _elapsedMs += dtMs;
-
-            float entryProgress = Math.Clamp(_elapsedMs / EntryDurationMs, 0f, 1f);
-            float easedEntry = EaseOutCubic(entryProgress);
-
-            float closeProgress = 0f;
-            if (_closing)
-            {
-                _closeElapsedMs += dtMs;
-                closeProgress = Math.Clamp(_closeElapsedMs / ExitDurationMs, 0f, 1f);
-            }
-
-            float easedClose = EaseInCubic(closeProgress);
-
-            float fade = _animations
-                ? easedEntry * (1f - easedClose)
-                : 1f - easedClose;
-
-            Opacity = Math.Clamp(fade * _windowOpacity, 0.0, 1.0);
-
-            float visual = _animations
-                ? EntryStartScale + (1f - EntryStartScale) * easedEntry
-                : 1f;
-            visual *= 1f - (1f - ExitEndScale) * easedClose;
-
-            float slide = _animations
-                ? (1f - easedEntry) * EntrySlideDip * _scale
-                  + easedClose * ExitSlideDip * _scale
-                : 0f;
-
-            // Past the entry animation the window content is static; the list
-            // itself repaints only while the selection pill is still moving.
-            // Every layout change is posted to the UI thread.
-            if (_closing || entryProgress < 1f)
-                UiAnimationHost.Post(() => ApplyFrame(visual, slide));
-
-            if (_closing && closeProgress >= 1f)
-            {
-                Unsubscribe();
-                Close();
-            }
-        }
-
-        private void ApplyLayout(float visualScale, float slide)
-        {
-            int width = Math.Max(1, (int)MathF.Round(_baseWidth * visualScale));
-            int height = Math.Max(1, (int)MathF.Round(_baseHeight * visualScale));
-            int left = _baseX + (_baseWidth - width) / 2;
-            int top = _baseY + (_baseHeight - height) / 2 + (int)MathF.Round(slide);
-
-            var bounds = new Rectangle(left, top, width, height);
-            if (Bounds != bounds)
-            {
-                Bounds = bounds;
-                UiAnimationHost.RequestActivity();
-            }
-
-            float s = _scale * visualScale;
+            float s = _scale * contentScale;
             float pad = PaddingDip * s;
-            float searchHeight = SearchHeightDip * s;
-            float footerHeight = FooterHeightDip * s;
+            float sh = SearchHeightDip * s;
+            float fh = FooterHeightDip * s;
 
-            _searchRect = new RectangleF(
-                pad,
-                pad,
-                MathF.Max(1f, width - pad * 2f),
-                searchHeight);
+            _searchRect = new RectangleF(cl + pad, ct + pad, MathF.Max(1f, cw - pad *2f), sh);
+
+            float ft = ct + ch - pad - fh;
+            _footerRect = new RectangleF(cl + pad, ft, MathF.Max(1f, cw - pad *2f), fh);
 
             float listTop = _searchRect.Bottom + GapDip * s;
-            float footerTop = height - pad - footerHeight;
-
-            _footerRect = new RectangleF(
-                pad,
-                footerTop,
-                MathF.Max(1f, width - pad * 2f),
-                footerHeight);
-
-            int listHeight = Math.Max(1, (int)MathF.Round(footerTop - listTop - GapDip * s));
-            _list.Bounds = new Rectangle(
-                (int)MathF.Round(pad),
-                (int)MathF.Round(listTop),
-                Math.Max(1, (int)MathF.Round(width - pad * 2f)),
-                listHeight);
-
-            float textHeight = MathF.Max(1f, 26f * s);
-            _search.Bounds = new Rectangle(
-                (int)MathF.Round(_searchRect.Left + 44f * s),
-                (int)MathF.Round(_searchRect.Top + (searchHeight - textHeight) / 2f),
-                Math.Max(1, (int)MathF.Round(_searchRect.Width - 58f * s)),
-                Math.Max(1, (int)MathF.Round(textHeight)));
+            float listH = MathF.Max(1f, ft - listTop - GapDip * s);
+            _list.SetBounds(MathF.Max(1f, cw - pad *2f), listH);
         }
 
-        private Bitmap? CaptureBackdrop()
-        {
-            try
-            {
-                var source = new Bitmap(_baseWidth, _baseHeight);
+        // ---- Animation ----
 
-                using (Graphics graphics = Graphics.FromImage(source))
-                {
-                    graphics.CopyFromScreen(
-                        _baseX,
-                        _baseY,
-                        0,
-                        0,
-                        new Size(_baseWidth, _baseHeight),
-                        CopyPixelOperation.SourceCopy);
-                }
-
-                return Blur(source);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Rofi menu: backdrop capture failed: {ex.Message}");
-                return null;
-            }
-        }
-
-        private static Bitmap Blur(Bitmap source)
-        {
-            try
-            {
-                int smallWidth = Math.Max(1, source.Width / 9);
-                int smallHeight = Math.Max(1, source.Height / 9);
-
-                using var small = new Bitmap(smallWidth, smallHeight);
-
-                using (Graphics graphics = Graphics.FromImage(small))
-                {
-                    graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                    graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                    graphics.DrawImage(source, 0, 0, smallWidth, smallHeight);
-                }
-
-                var blurred = new Bitmap(source.Width, source.Height);
-
-                using (Graphics graphics = Graphics.FromImage(blurred))
-                {
-                    graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                    graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                    graphics.DrawImage(small, 0, 0, source.Width, source.Height);
-                }
-
-                return blurred;
-            }
-            finally
-            {
-                source.Dispose();
-            }
-        }
-
-        private float EntryProgress()
-        {
-            return Math.Clamp(_elapsedMs / EntryDurationMs, 0f, 1f);
-        }
-
-        private void ApplyRoundedRegion()
-        {
-            if (Width <= 0 || Height <= 0)
-                return;
-
-            using GraphicsPath path = CreateRoundedPath(
-                new RectangleF(0f, 0f, Width, Height),
-                _cornerRadiusDip * _scale);
-
-            Region? previous = Region;
-            Region = new Region(path);
-            previous?.Dispose();
-        }
-
-        protected override void OnSizeChanged(EventArgs e)
-        {
-            base.OnSizeChanged(e);
-
-            // The window region must be re-cut whenever the card scales, but the
-            // handle only exists after the window is created.
-            if (IsHandleCreated)
-                ApplyRoundedRegion();
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                Unsubscribe();
-                _searchFont.Dispose();
-                _badgeFont.Dispose();
-                _backdrop?.Dispose();
-                _backdrop = null;
-            }
-
-            base.Dispose(disposing);
-        }
-
-        /// <summary>
-        /// Advances the entry, hover and exit phases on the frame clock. Runs on
-        /// the ticker thread, so window changes are posted back to the UI thread.
-        /// </summary>
         private RenderTicker.TickResult AdvanceFrame(double dtMs)
         {
-            if (Interlocked.Exchange(ref _frameInFlight, 1) == 1)
+            if (Interlocked.Exchange(ref _frameInFlight,1) ==1)
                 return RenderTicker.TickResult.Active;
 
             try
@@ -808,75 +872,293 @@ namespace nyxWM
             }
         }
 
-        /// <summary>Repaints while the entry or exit animation is still running.</summary>
+        private void Advance(float dtMs)
+        {
+            _elapsedMs += dtMs;
+
+            float entryProgress = Math.Clamp(_elapsedMs / EntryDurationMs, 0f, 1f);
+            float easedEntry = EaseOutCubic(entryProgress);
+
+            float closeProgress =0f;
+            if (_closing)
+            {
+                _closeElapsedMs += dtMs;
+                closeProgress = Math.Clamp(_closeElapsedMs / ExitDurationMs, 0f,1f);
+            }
+
+            float easedClose = EaseInCubic(closeProgress);
+
+            float cs = _animations
+                ? EntryStartScale + (1f - EntryStartScale) * easedEntry
+                : 1f;
+            cs *= 1f - (1f - ExitEndScale) * easedClose;
+
+            float slide = _animations
+                ? (1f - easedEntry) * EntrySlideDip * _scale
+                  + easedClose * ExitSlideDip * _scale
+                : 0f;
+
+            float opacity = _animations
+                ? Math.Clamp(easedEntry * (1f - easedClose), 0f,1f)
+                : 1f;
+
+            if (_closing || entryProgress < 1f)
+                UiAnimationHost.Post(() => ApplyFrame(cs, slide, opacity));
+
+            if (_closing && closeProgress >=1f)
+            {
+                Unsubscribe();
+                Close();
+            }
+        }
+
+        private void ApplyFrame(float contentScale, float slide, float opacity)
+        {
+            if (IsDisposed) return;
+            _opacity = opacity;
+            ApplyScaledLayout(contentScale, slide);
+            _list.FlushFrame();
+            ApplyLayered();
+        }
+
         private void RepaintIfAnimated()
         {
-            if (IsDisposed)
-                return;
-
-            // The selection pill keeps moving after the entry animation ends.
+            if (IsDisposed) return;
             if (!_closing && _elapsedMs >= EntryDurationMs && !_list.HasActiveAnimation)
                 return;
-
-            Invalidate();
+            ApplyLayered();
         }
 
-        /// <summary>
-        /// Applies the frame's window bounds and child layout on the UI thread.
-        /// </summary>
-        private void ApplyFrame(float visualScale, float slide)
+        // ---- Show / close ----
+
+        protected override void OnShown(EventArgs e)
         {
-            if (IsDisposed)
+            base.OnShown(e);
+
+            UiAnimationHost.RequestActivity();
+
+            if (!_animations)
+            {
+                _elapsedMs = EntryDurationMs;
+                _opacity =1f;
+            }
+
+            _unsubscribe = UiAnimationHost.Subscribe(
+                dtMs => AdvanceFrame(dtMs),
+                () => RepaintIfAnimated());
+
+            SetForegroundWindow(Handle);
+        }
+
+        protected override void OnActivated(EventArgs e)
+        {
+            base.OnActivated(e);
+            if (!_closing) ApplyLayered();
+        }
+
+        protected override void OnDeactivate(EventArgs e)
+        {
+            base.OnDeactivate(e);
+
+            if (!_closing && _elapsedMs >140f && !_list.IsPinMenuOpen && IsMouseButtonDown())
+                BeginClose();
+        }
+
+        private static bool IsMouseButtonDown()
+        {
+            return (GetAsyncKeyState(VK_LBUTTON) & 0x8000) !=0
+                   || (GetAsyncKeyState(VK_RBUTTON) & 0x8000) !=0
+                   || (GetAsyncKeyState(VK_MBUTTON) & 0x8000) !=0;
+        }
+
+        internal void RequestClose()
+        {
+            BeginClose();
+        }
+
+        private void BeginClose()
+        {
+            if (_closing) return;
+
+            if (!_animations)
+            {
+                Unsubscribe();
+                Close();
                 return;
+            }
 
-            ApplyLayout(visualScale, slide);
-            _list.FlushFrame();
-            Invalidate();
+            _closing = true;
+            _closeElapsedMs =0f;
         }
 
-        /// <summary>Detaches this window from the shared frame clock.</summary>
-        private void Unsubscribe()
+        // ---- App launch ----
+
+        private static void TryLaunch(RofiApp app, bool asAdministrator)
         {
-            Action? unsubscribe = Interlocked.Exchange(ref _unsubscribe, null);
-            _unsubscribe = null;
+            if (string.IsNullOrWhiteSpace(app.Path))
+                return;
 
             try
             {
-                unsubscribe?.Invoke();
+                ProcessStartInfo si = app.Kind == RofiAppKind.Uwp
+                    ? CreateUwpStartInfo(app)
+                    : CreateDesktopStartInfo(app, asAdministrator);
+
+                Process.Start(si);
             }
+            catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+            {
+                Console.WriteLine($"Rofi menu: elevation cancelled for '{app.Name}'.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Rofi menu: failed to launch '{app.Name}': {ex.Message}");
+            }
+        }
+
+        private static ProcessStartInfo CreateDesktopStartInfo(RofiApp app, bool asAdministrator)
+        {
+            var si = new ProcessStartInfo { FileName = app.Path, UseShellExecute = true };
+
+            if (!string.IsNullOrWhiteSpace(app.Arguments))
+                si.Arguments = app.Arguments;
+
+            if (!string.IsNullOrWhiteSpace(app.WorkingDirectory))
+                si.WorkingDirectory = app.WorkingDirectory;
+
+            if (asAdministrator)
+                si.Verb = "runas";
+
+            return si;
+        }
+
+        private static ProcessStartInfo CreateUwpStartInfo(RofiApp app)
+        {
+            return new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"shell:AppsFolder\\{app.Path}",
+                UseShellExecute = true
+            };
+        }
+
+        // ---- Backdrop capture ----
+
+        private Bitmap? CaptureBackdrop()
+        {
+            try
+            {
+                var source = new Bitmap(_baseWidth, _baseHeight);
+
+                using (Graphics g = Graphics.FromImage(source))
+                {
+                    g.CopyFromScreen(_baseX, _baseY, 0, 0,
+                        new Size(_baseWidth, _baseHeight),
+                        CopyPixelOperation.SourceCopy);
+                }
+
+                return Blur(source);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Rofi menu: backdrop capture failed: {ex.Message}");
+                return null;
+            }
+        }
+
+        private static Bitmap Blur(Bitmap source)
+        {
+            try
+            {
+                int sw = Math.Max(1, source.Width /9);
+                int sh = Math.Max(1, source.Height /9);
+
+                using var small = new Bitmap(sw, sh);
+
+                using (Graphics g = Graphics.FromImage(small))
+                {
+                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                    g.DrawImage(source,0,0, sw, sh);
+                }
+
+                var result = new Bitmap(source.Width, source.Height);
+
+                using (Graphics g = Graphics.FromImage(result))
+                {
+                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                    g.DrawImage(small,0,0, source.Width, source.Height);
+                }
+
+                return result;
+            }
+            finally
+            {
+                source.Dispose();
+            }
+        }
+
+        // ---- Cleanup ----
+
+        private void Unsubscribe()
+        {
+            Action? u = Interlocked.Exchange(ref _unsubscribe, null);
+            _unsubscribe = null;
+
+            try { u?.Invoke(); }
             catch (Exception ex)
             {
                 Console.WriteLine($"RofiMenuWindow: unsubscribe failed: {ex.Message}");
             }
         }
 
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                Unsubscribe();
+                _searchFont.Dispose();
+                _badgeFont.Dispose();
+                _backdrop?.Dispose();
+                _backdrop = null;
+                _buffer?.Dispose();
+                _buffer = null;
+                _list.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        // ---- Math helpers ----
+
         private static float EaseOutCubic(float progress)
         {
-            float inverse = 1f - Math.Clamp(progress, 0f, 1f);
-            return 1f - inverse * inverse * inverse;
+            float inv = 1f - Math.Clamp(progress, 0f,1f);
+            return 1f - inv * inv * inv;
         }
 
         private static float EaseInCubic(float progress)
         {
-            float clamped = Math.Clamp(progress, 0f, 1f);
-            return clamped * clamped * clamped;
+            float c = Math.Clamp(progress, 0f,1f);
+            return c * c * c;
         }
 
         private static GraphicsPath CreateRoundedPath(RectangleF rect, float radius)
         {
             var path = new GraphicsPath();
-            float diameter = Math.Min(radius * 2f, Math.Min(rect.Width, rect.Height));
+            float d = Math.Min(radius *2f, Math.Min(rect.Width, rect.Height));
 
-            if (diameter <= 0f)
+            if (d <=0f)
             {
                 path.AddRectangle(rect);
                 return path;
             }
 
-            path.AddArc(rect.Left, rect.Top, diameter, diameter, 180f, 90f);
-            path.AddArc(rect.Right - diameter, rect.Top, diameter, diameter, 270f, 90f);
-            path.AddArc(rect.Right - diameter, rect.Bottom - diameter, diameter, diameter, 0f, 90f);
-            path.AddArc(rect.Left, rect.Bottom - diameter, diameter, diameter, 90f, 90f);
+            path.AddArc(rect.Left, rect.Top, d, d, 180f, 90f);
+            path.AddArc(rect.Right - d, rect.Top, d, d, 270f, 90f);
+            path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0f, 90f);
+            path.AddArc(rect.Left, rect.Bottom - d, d, d, 90f, 90f);
             path.CloseFigure();
             return path;
         }

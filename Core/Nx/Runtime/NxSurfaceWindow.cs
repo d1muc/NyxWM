@@ -41,7 +41,7 @@ namespace nyxWM.Nx
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.Manual;
             TopMost = placement.StayOnTop;
-            Text = surfaceName;
+            Text = string.Empty;
             BackColor = Color.Black;
             DoubleBuffered = true;
             Opacity = placement.Opacity;

@@ -22,10 +22,10 @@ namespace nyxWM
         internal const int HOTKEY_ID_LAUNCH_APP_BASE = 0x1000;
         internal const int WM_HOTKEY = 0x0312;
 
-        // The .nx surfaces (bar and widgets) are parked while the visual language
-        // is finished. Set this to true to bring them back: the documents in
-        // Res/Nx and the whole loader stay in the build either way.
-        private static readonly bool NxSurfacesEnabled = false;
+        // The .nx visual language is the main theme of the application. The
+        // documents in "themes" next to the exe drive the surfaces; their tokens
+        // also drive the palette of every WinForms overlay.
+        private static readonly bool NxSurfacesEnabled = true;
 
         // Track registered hotkey IDs for proper cleanup
         private static readonly List<int> RegisteredHotkeyIds = new();
@@ -65,34 +65,54 @@ namespace nyxWM
             // A gesture start must lift the ticker out of its idle cadence at once.
             windowManager.RenderActivityRequested += UiAnimationHost.RequestActivity;
 
+            // Notifications are suppressed while game mode (pause) is active.
+            Func<bool> isGameMode = () => windowManager.IsPaused;
+            NotificationService.Initialize(isGameMode);
+            LauncherService.Initialize(isGameMode);
+
+            // The editable theme.nx is read first; if it has an error the
+            // built-in copy compiled into the exe is used instead and the user
+            // is told to fix the file. Where the theme says "auto", the accent
+            // chosen in settings is used.
+            System.Drawing.Color autoAccent = NotificationThemeResolver.ResolveAccentColor(ConfigManager.GetLiveTheme());
+            NxThemeLoader themeLoader = NxThemeLoader.Load(AppDomain.CurrentDomain.BaseDirectory, autoAccent, ConfigManager.Current.ThemeFile);
+            NxTheme.Install(themeLoader.Theme);
+
             // The .nx surfaces are plain data: a bar, widgets and anything else the
-            // documents declare. Shipped files live in Res/Nx; a file of the same
-            // name under %APPDATA%\nyxWM\nx overrides it without touching the app.
+            // documents declare. Shipped files live in "themes" next to the exe; a
+            // file of the same name under %APPDATA%\nyxWM\nx overrides it.
             NxRuntime? nxRuntime = null;
 
             if (NxSurfacesEnabled)
             {
-                nxRuntime = new NxRuntime(NxDirectories());
+                nxRuntime = new NxRuntime(NxDirectories(), themeLoader.FallbackSource, autoAccent);
                 nxRuntime.Start();
             }
 
-            // Notifications are suppressed while game mode (pause) is active.
-            NotificationService.Initialize(() => windowManager.IsPaused);
-            LauncherService.Initialize(() => windowManager.IsPaused);
+            if (themeLoader.ErrorMessage != null)
+            {
+                string message = themeLoader.ErrorMessage;
+                UiAnimationHost.Post(() => NotificationService.Show(
+                    "Theme fallback",
+                    $"{message} — fix themes/{ConfigManager.Current.ThemeFile}"));
+            }
 
             // The settings window freezes camera panning while it is open, like a
             // lightweight game mode: the hooks stay installed so the UI still works.
-            SettingsWindowService.Initialize(windowManager.SetCameraSuspended);
+            SettingsWindowService.Initialize(windowManager.SetCameraSuspended, isGameMode);
 
-            // The Rofi menu freezes camera panning for the same reason.
-            RofiMenuService.Initialize(windowManager.SetCameraSuspended);
+            // The Rofi menu freezes camera panning for the same reason,
+            // and blocks opening while the camera is still in motion.
+            Func<bool> isCameraMoving = () => windowManager.IsRendering;
+            RofiMenuService.Initialize(windowManager.SetCameraSuspended, isGameMode, isCameraMoving);
 
             // Terminal windows are ordinary canvas windows, so they only need the
             // camera cache to notice them and the same focus centring every other
             // window receives from the workspace hook.
             TerminalWindowService.Initialize(
                 windowManager.InvalidateWindowCache,
-                windowManager.CenterOnFocus);
+                windowManager.CenterOnFocus,
+                isGameMode);
 
             // Declare renderTimer as nullable to be assigned later
             HighResolutionTimer? renderTimer = null;
@@ -188,8 +208,15 @@ namespace nyxWM
                 }
 
                 if (paused)
+                {
+                    // Game mode hides every overlay and widget immediately.
                     RofiMenuService.Close();
+                    LauncherService.Hide();
+                    SettingsWindowService.Close();
+                    TerminalWindowService.CloseAll();
+                }
 
+                nxRuntime?.SetGameMode(paused);
                 NotificationService.SetSuspended(paused);
             };
 
@@ -272,7 +299,7 @@ namespace nyxWM
         /// </summary>
         private static string[] NxDirectories()
         {
-            string shipped = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Res", "Nx");
+            string shipped = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "themes");
             string user = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "nyxWM",
