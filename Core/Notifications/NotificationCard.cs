@@ -45,6 +45,9 @@ namespace nyxWM
         private Bitmap? _buffer;
         private int _renderStamp = -1;
 
+        // Leaf particles around the notification card.
+        private Nx.NxLeafParticle? _leafParticle;
+
         internal double AgeMs { get; private set; }
         internal double LifetimeMs { get; }
         internal bool IsClosing => _closing;
@@ -97,6 +100,8 @@ namespace nyxWM
 
             Location = new Point((int)MathF.Round(_x), (int)MathF.Round(_y));
             _opacity = _animations ? 0f : _windowOpacity;
+
+            _leafParticle = Nx.NxLeafParticle.Create();
         }
 
         internal static Size Measure(float scale)
@@ -158,6 +163,9 @@ namespace nyxWM
                 _x = TargetX;
                 _y = TargetY;
             }
+
+            // Advance leaf particles around the card.
+            _leafParticle?.Update(dtMs, new RectangleF(0f, 0f, Width, Height));
 
             // Window placement must stay on the UI thread, so a subscriber that
             // advances off-thread posts the move to the host instead.
@@ -307,6 +315,9 @@ namespace nyxWM
             DrawAccent(graphics);
             DrawText(graphics);
             DrawLifetimeBar(graphics, cardRect);
+
+            // Paint leaf particles on top of the card.
+            _leafParticle?.Paint(graphics);
         }
 
         private void DrawAccent(Graphics graphics)

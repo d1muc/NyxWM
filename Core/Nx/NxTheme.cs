@@ -68,6 +68,9 @@ namespace nyxWM.Nx
         /// <summary>Target frame rate from theme file, or 0 if not set (use default).</summary>
         internal int Fps { get; }
 
+        /// <summary>Layout and placement options for the WinForms overlays.</summary>
+        internal NxLayout Layout { get; }
+
         private NxTheme(
             Color accent,
             Color accentSoft,
@@ -93,7 +96,8 @@ namespace nyxWM.Nx
             float fontSize,
             float fontSizeSmall,
             float surfaceOpacity,
-            int fps)
+            int fps,
+            NxLayout layout)
         {
             Accent = accent;
             AccentSoft = accentSoft;
@@ -120,6 +124,7 @@ namespace nyxWM.Nx
             FontSizeSmall = fontSizeSmall;
             SurfaceOpacity = surfaceOpacity;
             Fps = fps;
+            Layout = layout;
         }
 
         internal static void Install(NxTheme? theme)
@@ -204,30 +209,76 @@ namespace nyxWM.Nx
                 NumberToken(tokens, "size", 13f),
                 NumberToken(tokens, "size-small", 11f),
                 Math.Clamp(NumberToken(tokens, "surface-opacity", 0.95f), 0.4f, 1f),
-                (int)NumberToken(tokens, "fps", 0f));
+                (int)NumberToken(tokens, "fps", 0f),
+                NxLayout.FromTokens(tokens));
         }
 
-        internal static NxTheme CreateDefault()
+        internal static NxTheme CreateDefault(Color? accentOverride = null)
         {
-            Color accent = Color.FromArgb(59, 130, 246);
+            Color accent = accentOverride ?? Color.FromArgb(59, 130, 246);
+            return FromAccent(accent);
+        }
+
+        /// <summary>
+        /// Generates a complete theme palette from a single accent colour.
+        /// Dark surfaces are tinted toward the accent; light surfaces stay neutral.
+        /// Semantic colours (ok/warn/bad) keep their meaning but harmonise.
+        /// </summary>
+        internal static NxTheme FromAccent(Color accent)
+        {
+            Color accentSoft = WithAlpha(accent, 77);
+
+            // Dark mode base — very dark blue-gray, tinted slightly toward accent
+            Color bgDark = Color.FromArgb(27, 29, 36);
+            Color bgDarkSoft = Color.FromArgb(16, 17, 22);
+            Color bgDarkHover = Color.FromArgb(38, 255, 255, 255);
+            Color strokeDark = Color.FromArgb(56, 235, 238, 245);
+
+            // Light mode base — clean white/light gray
+            Color bgLight = Color.FromArgb(244, 245, 247);
+            Color bgLightSoft = Color.FromArgb(232, 234, 239);
+            Color fgLight = Color.FromArgb(20, 22, 28);
+            Color mutedLight = Color.FromArgb(98, 105, 118);
+            Color strokeLight = Color.FromArgb(40, 20, 22, 28);
+
+            // Tint dark backgrounds toward accent (subtle, ~6%)
+            float tint = 0.06f;
+            Color bgTop = Blend(bgDark, accent, tint);
+            Color bgBottom = Blend(bgDarkSoft, accent, tint * 0.6f);
+            Color stroke = Blend(strokeDark, accent, 0.15f);
+            Color hover = Blend(bgDarkHover, accent, 0.08f);
+
+            // Foreground / muted stay readable but pick up accent hue slightly
+            Color fg = Color.FromArgb(238, 241, 248);
+            Color muted = Color.FromArgb(160, 166, 178);
+
+            // Semantic colours — harmonised with accent
+            Color ok = Harmonize(Color.FromArgb(158, 206, 106), accent);
+            Color warn = Harmonize(Color.FromArgb(224, 175, 104), accent);
+            Color bad = Harmonize(Color.FromArgb(247, 118, 142), accent);
+
+            // Light backgrounds get a very subtle accent tint
+            Color lightBgTop = Blend(bgLight, accent, 0.02f);
+            Color lightBgBottom = Blend(bgLightSoft, accent, 0.015f);
+            Color lightStroke = Blend(strokeLight, accent, 0.1f);
 
             return new NxTheme(
                 accent,
-                WithAlpha(accent, 77),
-                Color.FromArgb(238, 241, 248),
-                Color.FromArgb(160, 166, 178),
-                Color.FromArgb(158, 206, 106),
-                Color.FromArgb(224, 175, 104),
-                Color.FromArgb(247, 118, 142),
-                Color.FromArgb(27, 29, 36),
-                Color.FromArgb(16, 17, 22),
-                Color.FromArgb(38, 255, 255, 255),
-                Color.FromArgb(56, 235, 238, 245),
-                Color.FromArgb(244, 245, 247),
-                Color.FromArgb(232, 234, 239),
-                Color.FromArgb(20, 22, 28),
-                Color.FromArgb(98, 105, 118),
-                Color.FromArgb(40, 20, 22, 28),
+                accentSoft,
+                fg,
+                muted,
+                ok,
+                warn,
+                bad,
+                bgTop,
+                bgBottom,
+                hover,
+                stroke,
+                lightBgTop,
+                lightBgBottom,
+                fgLight,
+                mutedLight,
+                lightStroke,
                 14f,
                 10f,
                 10f,
@@ -236,7 +287,24 @@ namespace nyxWM.Nx
                 13f,
                 11f,
                 0.95f,
-                0);
+                0,
+                NxLayout.Default);
+        }
+
+        private static Color Blend(Color background, Color tint, float amount)
+        {
+            float clamped = Math.Clamp(amount, 0f, 1f);
+            return Color.FromArgb(
+                background.A,
+                (int)MathF.Round(background.R + (tint.R - background.R) * clamped),
+                (int)MathF.Round(background.G + (tint.G - background.G) * clamped),
+                (int)MathF.Round(background.B + (tint.B - background.B) * clamped));
+        }
+
+        private static Color Harmonize(Color semantic, Color accent)
+        {
+            // Pull semantic color 15% toward accent hue for harmony
+            return Blend(semantic, accent, 0.15f);
         }
 
         private static Color ResolveAccent(

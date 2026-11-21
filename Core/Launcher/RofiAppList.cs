@@ -18,6 +18,8 @@ namespace nyxWM
 
         private readonly NotificationTheme _theme;
         private readonly float _scale;
+        private readonly Nx.NxLayout _layout;
+        private readonly int _columns;
         private readonly bool _smooth = VisualPreferences.SmoothAnimations;
         private readonly Font _nameFont;
         private readonly Font _metaFont;
@@ -46,6 +48,8 @@ namespace nyxWM
         {
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
             _scale = Math.Clamp(scale, 0.75f, 3f);
+            _layout = Nx.NxTheme.Current.Layout;
+            _columns = _layout.EffectiveColumns;
             _nameFont = VisualPreferences.CreateUiFont("Segoe UI", 10.5f, FontStyle.Regular);
             _metaFont = VisualPreferences.CreateUiFont("Segoe UI", 8.25f, FontStyle.Regular);
             _badgeFont = VisualPreferences.CreateUiFont("Segoe UI", 7.75f, FontStyle.Regular);
@@ -77,10 +81,30 @@ namespace nyxWM
 
         private int ItemHeight => Math.Max(1, (int)MathF.Round(RowHeightDip * _scale));
 
-        internal int VisibleRows()
+        /// <summary>Selection step for Up/Down: one row in the active layout.</summary>
+        internal int ColumnStep => _columns;
+
+        /// <summary>Items that fit on one page (visible rows times columns).</summary>
+        internal int VisibleItems()
         {
-            if (_drawHeight <= 0) return 1;
-            return Math.Max(1, (int)(_drawHeight / ItemHeight));
+            if (_drawHeight <= 0) return _columns;
+            return Math.Max(_columns, (int)(_drawHeight / ItemHeight) * _columns);
+        }
+
+        private float StaggerPx => _layout.IsZigzag ? _layout.MenuStagger * _scale : 0f;
+
+        private float RowShift(int row) => _layout.IsZigzag && (row & 1) == 1 ? StaggerPx : 0f;
+
+        private float ScrollReserve()
+        {
+            return _items.Count > VisibleItems()
+                ? (ScrollbarWidthDip + ScrollbarMarginDip * 2f) * _scale
+                : 0f;
+        }
+
+        private float CellWidth(float rowWidth)
+        {
+            return MathF.Max(1f, (rowWidth - StaggerPx) / _columns);
         }
 
         internal void SetBounds(float width, float height)
@@ -173,7 +197,9 @@ namespace nyxWM
                 return false;
             }
 
-            float targetTop = (_selectedIndex - _topIndex) * ItemHeight + 2f * _scale;
+            int rel = _selectedIndex - _topIndex;
+            int row = rel / _columns;
+            float targetTop = row * ItemHeight + 2f * _scale;
             float targetHeight = ItemHeight - 4f * _scale;
 
             if (!_smooth)
@@ -229,7 +255,9 @@ namespace nyxWM
                 return;
             }
 
-            _highlightTop = (_selectedIndex - _topIndex) * ItemHeight + 2f * _scale;
+            int rel = _selectedIndex - _topIndex;
+            int row = rel / _columns;
+            _highlightTop = row * ItemHeight + 2f * _scale;
             _highlightHeight = ItemHeight - 4f * _scale;
             _highlightReady = true;
         }
@@ -243,27 +271,31 @@ namespace nyxWM
             graphics.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
             int itemHeight = ItemHeight;
-            int visible = VisibleRows();
+            int visible = VisibleItems();
             float scrollReserve = _items.Count > visible
                 ? (ScrollbarWidthDip + ScrollbarMarginDip * 2f) * _scale
                 : 0f;
             float rowWidth = MathF.Max(1f, _drawWidth - scrollReserve);
+            float cellW = CellWidth(rowWidth);
 
-            DrawHighlight(graphics, rowWidth);
+            DrawHighlight(graphics, cellW);
 
             for (int i = _topIndex; i < _items.Count; i++)
             {
-                float y = (i - _topIndex) * itemHeight;
+                int rel = i - _topIndex;
+                int row = rel / _columns;
+                float y = row * itemHeight;
                 if (y >= _drawHeight)
                     break;
 
+                float x = (rel % _columns) * cellW + RowShift(row);
                 bool selected = i == _selectedIndex;
                 bool hovered = i == _hoverIndex && !selected;
 
                 if (hovered)
-                    DrawHover(graphics, rowWidth, y, itemHeight);
+                    DrawHover(graphics, x, cellW, y, itemHeight);
 
-                DrawRow(graphics, i, itemHeight, rowWidth, y, selected);
+                DrawRow(graphics, i, itemHeight, x, cellW, y, selected);
             }
 
             if (_items.Count == 0)
@@ -274,20 +306,26 @@ namespace nyxWM
 
         // ---- Mouse input helpers ----
 
-        internal int HitTest(int y)
+        internal int HitTest(int x, int y)
         {
             if (_items.Count == 0)
                 return -1;
 
             int row = Math.Max(0, y) / ItemHeight;
-            int index = _topIndex + row;
+            float rowWidth = MathF.Max(1f, _drawWidth - ScrollReserve());
+            float cellW = CellWidth(rowWidth);
+            float shift = RowShift(row);
+            int col = (int)((x - shift) / cellW);
+            if (col < 0 || col >= _columns)
+                return -1;
 
+            int index = _topIndex + row * _columns + col;
             return index < _items.Count ? index : -1;
         }
 
-        internal bool SetHover(int y)
+        internal bool SetHover(int x, int y)
         {
-            int index = HitTest(y);
+            int index = HitTest(x, y);
             if (index == _hoverIndex)
                 return false;
 
@@ -306,9 +344,9 @@ namespace nyxWM
             return true;
         }
 
-        internal void HandleMouseDown(int y, MouseButtons button, Point screenLocation)
+        internal void HandleMouseDown(int x, int y, MouseButtons button, Point screenLocation)
         {
-            int index = HitTest(y);
+            int index = HitTest(x, y);
             if (index < 0)
                 return;
 
@@ -339,12 +377,12 @@ namespace nyxWM
             Invalidated?.Invoke();
         }
 
-        internal void HandleMouseUp(int y, MouseButtons button)
+        internal void HandleMouseUp(int x, int y, MouseButtons button)
         {
             if (button != MouseButtons.Left)
                 return;
 
-            int index = HitTest(y);
+            int index = HitTest(x, y);
             if (index < 0)
                 return;
 
@@ -356,10 +394,10 @@ namespace nyxWM
             ActivateSelected(asAdministrator: false);
         }
 
-        internal void HandleMouseWheel(int delta, int y)
+        internal void HandleMouseWheel(int delta, int x, int y)
         {
-            MoveSelection(delta > 0 ? -1 : 1);
-            SetHover(y);
+            MoveSelection(delta > 0 ? -_columns : _columns);
+            SetHover(x, y);
         }
 
         // ---- Context menu ----
@@ -388,15 +426,20 @@ namespace nyxWM
 
         // ---- Drawing helpers ----
 
-        private void DrawHighlight(Graphics graphics, float rowWidth)
+        private void DrawHighlight(Graphics graphics, float cellW)
         {
             if (!_highlightReady || _selectedIndex < 0)
                 return;
 
+            int rel = _selectedIndex - _topIndex;
+            if (rel < 0) return;
+            int row = rel / _columns;
+            float x = 2f * _scale + (rel % _columns) * cellW + RowShift(row);
+
             var pill = new RectangleF(
-                2f * _scale,
+                x,
                 _highlightTop,
-                MathF.Max(1f, rowWidth - 4f * _scale),
+                MathF.Max(1f, cellW - 4f * _scale),
                 MathF.Max(1f, _highlightHeight));
 
             Color left = Color.FromArgb(_theme.IsLight ? 54 : 74, _theme.Accent);
@@ -427,12 +470,12 @@ namespace nyxWM
             }
         }
 
-        private void DrawHover(Graphics graphics, float rowWidth, float y, int itemHeight)
+        private void DrawHover(Graphics graphics, float x, float cellW, float y, int itemHeight)
         {
             var pill = new RectangleF(
-                2f * _scale,
+                x + 2f * _scale,
                 y + 2f * _scale,
-                MathF.Max(1f, rowWidth - 4f * _scale),
+                MathF.Max(1f, cellW - 4f * _scale),
                 itemHeight - 4f * _scale);
 
             using GraphicsPath path = CreateRoundedPath(pill, 10f * _scale);
@@ -446,14 +489,15 @@ namespace nyxWM
             Graphics graphics,
             int index,
             int itemHeight,
-            float rowWidth,
+            float x,
+            float cellW,
             float y,
             bool selected)
         {
             RofiApp app = _items[index];
 
             float iconSize = IconSizeDip * _scale;
-            float iconLeft = 12f * _scale;
+            float iconLeft = x + 12f * _scale;
             float iconTop = y + (itemHeight - iconSize) / 2f;
             var iconRect = new RectangleF(iconLeft, iconTop, iconSize, iconSize);
 
@@ -463,7 +507,7 @@ namespace nyxWM
             float badgeWidth = selected ? MeasureEnterBadge(graphics) : 0f;
             float textWidth = MathF.Max(
                 1f,
-                rowWidth - textLeft - 12f * _scale - (selected ? badgeWidth + 10f * _scale : 0f));
+                x + cellW - textLeft - 12f * _scale - (selected ? badgeWidth + 10f * _scale : 0f));
 
             var nameRect = new RectangleF(textLeft, y + 9f * _scale, textWidth, 20f * _scale);
             var categoryRect = new RectangleF(textLeft, y + 29f * _scale, textWidth, 16f * _scale);
@@ -504,7 +548,7 @@ namespace nyxWM
             }
 
             if (selected)
-                DrawEnterBadge(graphics, rowWidth, y, itemHeight);
+                DrawEnterBadge(graphics, x, cellW, y, itemHeight);
         }
 
         private void DrawIcon(Graphics graphics, RofiApp app, RectangleF iconRect, bool selected)
@@ -596,12 +640,12 @@ namespace nyxWM
             return size.Width + 14f * _scale;
         }
 
-        private void DrawEnterBadge(Graphics graphics, float rowWidth, float y, int itemHeight)
+        private void DrawEnterBadge(Graphics graphics, float x, float cellW, float y, int itemHeight)
         {
             string text = "Enter ↵";
             float width = MeasureEnterBadge(graphics);
             float height = 22f * _scale;
-            float left = rowWidth - width - 12f * _scale;
+            float left = x + cellW - width - 12f * _scale;
             float top = y + (itemHeight - height) / 2f;
 
             var badge = new RectangleF(left, top, width, height);
@@ -687,7 +731,7 @@ namespace nyxWM
 
         private void EnsureSelectionVisible()
         {
-            int visible = VisibleRows();
+            int visible = VisibleItems();
             int count = _items.Count;
             int maxTop = Math.Max(0, count - visible);
             int previousTop = _topIndex;
@@ -701,6 +745,8 @@ namespace nyxWM
             }
 
             _topIndex = Math.Clamp(_topIndex, 0, maxTop);
+            // Keep the scroll offset on a row boundary so no half-row shows.
+            _topIndex -= _topIndex % _columns;
 
             if (_topIndex != previousTop && _highlightReady)
                 SnapHighlight();

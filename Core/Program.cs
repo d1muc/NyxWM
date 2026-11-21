@@ -74,9 +74,27 @@ namespace nyxWM
             // built-in copy compiled into the exe is used instead and the user
             // is told to fix the file. Where the theme says "auto", the accent
             // chosen in settings is used.
-            System.Drawing.Color autoAccent = NotificationThemeResolver.ResolveAccentColor(ConfigManager.GetLiveTheme());
-            NxThemeLoader themeLoader = NxThemeLoader.Load(AppDomain.CurrentDomain.BaseDirectory, autoAccent, ConfigManager.Current.ThemeFile);
-            NxTheme.Install(themeLoader.Theme);
+            string liveTheme = ConfigManager.GetLiveTheme();
+            string themeFile = ConfigManager.Current.ThemeFile;
+            System.Drawing.Color autoAccent = NotificationThemeResolver.ResolveAccentColor(liveTheme);
+
+            NxTheme theme;
+            NxThemeLoader? themeLoader = null;
+            string? themeError = null;
+
+            // "Off" for ThemeFile means use built-in defaults generated from accent, skip .nx file loading.
+            if (string.Equals(themeFile, "Off", StringComparison.OrdinalIgnoreCase))
+            {
+                theme = NxTheme.CreateDefault(autoAccent);
+            }
+            else
+            {
+                themeLoader = NxThemeLoader.Load(AppDomain.CurrentDomain.BaseDirectory, autoAccent, themeFile);
+                theme = themeLoader.Theme;
+                themeError = themeLoader.ErrorMessage;
+            }
+
+            NxTheme.Install(theme);
 
             // The .nx surfaces are plain data: a bar, widgets and anything else the
             // documents declare. Shipped files live in "themes" next to the exe; a
@@ -85,11 +103,12 @@ namespace nyxWM
 
             if (NxSurfacesEnabled)
             {
-                nxRuntime = new NxRuntime(NxDirectories(), themeLoader.FallbackSource, autoAccent);
+                string fallbackSource = themeLoader?.FallbackSource ?? NxThemeLoader.GetFallbackSourceStatic();
+                nxRuntime = new NxRuntime(NxDirectories(), fallbackSource, autoAccent);
                 nxRuntime.Start();
             }
 
-            if (themeLoader.ErrorMessage != null)
+            if (themeError != null && themeLoader != null)
             {
                 string message = themeLoader.ErrorMessage;
                 UiAnimationHost.Post(() => NotificationService.Show(
@@ -248,13 +267,29 @@ namespace nyxWM
                 windowManager.ApplyLiveConfig();
 
                 // Reload .nx theme — picks up a changed ThemeFile from settings.
-                System.Drawing.Color autoAccent = NotificationThemeResolver.ResolveAccentColor(
-                    ConfigManager.GetLiveTheme());
-                NxThemeLoader themeLoader = NxThemeLoader.Load(
-                    AppDomain.CurrentDomain.BaseDirectory,
-                    autoAccent,
-                    ConfigManager.Current.ThemeFile);
-                NxTheme.Install(themeLoader.Theme);
+                string liveTheme = ConfigManager.GetLiveTheme();
+                string themeFile = ConfigManager.Current.ThemeFile;
+                System.Drawing.Color autoAccent = NotificationThemeResolver.ResolveAccentColor(liveTheme);
+
+                NxTheme theme;
+                NxThemeLoader? themeLoader = null;
+                string? themeError = null;
+
+                if (string.Equals(themeFile, "Off", StringComparison.OrdinalIgnoreCase))
+                {
+                    theme = NxTheme.CreateDefault(autoAccent);
+                }
+                else
+                {
+                    themeLoader = NxThemeLoader.Load(
+                        AppDomain.CurrentDomain.BaseDirectory,
+                        autoAccent,
+                        themeFile);
+                    theme = themeLoader.Theme;
+                    themeError = themeLoader.ErrorMessage;
+                }
+
+                NxTheme.Install(theme);
 
                 // Apply FPS from theme, or fall back to monitor refresh rate.
                 if (NxTheme.Current.Fps > 0)
@@ -272,7 +307,7 @@ namespace nyxWM
                 TerminalWindowService.ApplyThemeToAll();
                 TerminalWindowService.ApplySettingsToAll();
 
-                if (themeLoader.ErrorMessage != null)
+                if (themeError != null && themeLoader != null)
                 {
                     string msg = themeLoader.ErrorMessage;
                     UiAnimationHost.Post(() => NotificationService.Show(

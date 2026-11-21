@@ -1065,10 +1065,20 @@ namespace nyxWM
 
         private void PopulateThemeFiles(SettingsComboBox combo, string current)
         {
+            // "Off" means use built-in defaults with accent applied — no .nx file.
+            combo.Items.Add("Off");
+
             if (!Directory.Exists(_themeDirectory))
             {
-                combo.Items.Add(current);
-                combo.SelectedItem = current;
+                if (string.Equals(current, "Off", StringComparison.OrdinalIgnoreCase))
+                {
+                    combo.SelectedItem = "Off";
+                }
+                else
+                {
+                    combo.Items.Add(current);
+                    combo.SelectedItem = current;
+                }
                 return;
             }
 
@@ -1088,7 +1098,7 @@ namespace nyxWM
             {
             }
 
-            if (combo.Items.Count == 0)
+            if (combo.Items.Count == 1) // only "Off"
                 combo.Items.Add(current);
 
             if (selected.Length > 0)
@@ -1105,8 +1115,9 @@ namespace nyxWM
                     }
                 }
             }
-            else if (combo.Items.Count > 0)
+            else
             {
+                // Default to "Off"
                 combo.SelectedIndex = 0;
             }
         }

@@ -1,11 +1,19 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 
 namespace nyxWM
 {
+    internal sealed class NativeMethods
+    {
+        [DllImport("user32.dll")]
+        internal static extern bool SetForegroundWindow(IntPtr hWnd);
+    }
+
     /// <summary>
     /// Manages notification cards: lifetime, stacking, frame ticks and
     /// language-change detection. Cards advance on the shared frame clock.
@@ -17,8 +25,6 @@ namespace nyxWM
         private const float LanguagePollIntervalMs = 250f;
         private const float StartupDelayMs = 700f;
 
-        private const float MarginDip = 20f;
-        private const float GapDip = 10f;
         private const float SlideDistanceDip = 22f;
 
         private static readonly List<NotificationCard> Cards = new();
@@ -114,8 +120,9 @@ namespace nyxWM
             Rectangle work = Screen.PrimaryScreen?.WorkingArea
                              ?? new Rectangle(0, 0, 1920, 1080);
             Size size = NotificationCard.Measure(scale);
-            float margin = MarginDip * scale;
-            float gap = GapDip * scale;
+            Nx.NxLayout layout = Nx.NxTheme.Current.Layout;
+            float margin = layout.NotificationMargin * scale;
+            float gap = layout.NotificationGap * scale;
             float slide = SlideDistanceDip * scale;
 
             (float targetX, float targetY) = ComputeSlot(work, size, margin, gap, _position, 0);
@@ -138,6 +145,18 @@ namespace nyxWM
             // callback, so the window handle is always available here.
             card.Show();
             Reflow();
+
+            // Restore focus to Rofi menu if it was focused, so typing continues uninterrupted.
+            if (RofiMenuService.IsOpen)
+            {
+                var rofiWindow = typeof(RofiMenuService).GetField("_window",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?
+                    .GetValue(null) as Form;
+                if (rofiWindow != null && !rofiWindow.IsDisposed)
+                {
+                    NativeMethods.SetForegroundWindow(rofiWindow.Handle);
+                }
+            }
 
             TrimExcessCards();
 
@@ -272,8 +291,9 @@ namespace nyxWM
             Rectangle work = Screen.PrimaryScreen?.WorkingArea
                              ?? new Rectangle(0, 0, 1920, 1080);
             Size size = NotificationCard.Measure(scale);
-            float margin = MarginDip * scale;
-            float gap = GapDip * scale;
+            Nx.NxLayout layout = Nx.NxTheme.Current.Layout;
+            float margin = layout.NotificationMargin * scale;
+            float gap = layout.NotificationGap * scale;
 
             int slot = 0;
             foreach (NotificationCard card in Cards)
@@ -305,9 +325,12 @@ namespace nyxWM
             };
 
             float stride = size.Height + gap;
-            float y = IsTopPosition(position)
-                ? work.Top + margin + slot * stride
-                : work.Bottom - margin - size.Height - slot * stride;
+            float y = position switch
+            {
+                _ when IsTopPosition(position) => work.Top + margin + slot * stride,
+                NotificationPosition.Center => work.Top + (work.Height - size.Height) / 2f + slot * stride,
+                _ => work.Bottom - margin - size.Height - slot * stride
+            };
 
             return (x, y);
         }
@@ -321,6 +344,18 @@ namespace nyxWM
 
         private static NotificationPosition ResolvePosition()
         {
+            // The .nx theme overrides config.jsonc when it pins a position.
+            string nxPosition = Nx.NxTheme.Current.Layout.NotificationPosition;
+            if (!string.IsNullOrWhiteSpace(nxPosition))
+            {
+                string normalized = nxPosition.Trim().ToLowerInvariant();
+                if (normalized is "center" or "middle" or "screen-center" or "screencenter")
+                    return NotificationPosition.Center;
+
+                if (NotificationPositionParser.TryParse(nxPosition, out NotificationPosition parsed))
+                    return parsed;
+            }
+
             NotificationSettings? settings = ConfigManager.Current.Notifications;
             return NotificationPositionParser.Parse(settings?.Position);
         }

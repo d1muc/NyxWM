@@ -30,6 +30,8 @@ namespace nyxWM
         private const int WM_SETCURSOR = 0x0020;
         private const int WM_NCCALCSIZE = 0x0083;
         private const int WM_NCPAINT = 0x0085;
+        private const int WM_KILLFOCUS = 0x0008;
+        private const int WM_SETFOCUS = 0x0007;
 
         private const int DwmwaWindowCornerPreference = 33;
         private const int DwmcpDoNotRound = 1;
@@ -38,6 +40,12 @@ namespace nyxWM
         private const int VK_LBUTTON = 0x01;
         private const int VK_RBUTTON = 0x02;
         private const int VK_MBUTTON = 0x04;
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern int GetWindowThreadProcessId(IntPtr hWnd, out int lpdwProcessId);
 
         private const float BaseWidthDip = 540f;
         private const float BaseHeightDip = 560f;
@@ -92,6 +100,9 @@ namespace nyxWM
         private int _renderStamp = -1;
         private float _opacity = 1f;
 
+        // Leaf particles around the menu window.
+        private Nx.NxLeafParticle? _leafParticle;
+
         internal RofiMenuWindow(NotificationTheme theme, float scale)
         {
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
@@ -142,6 +153,8 @@ namespace nyxWM
 
             ApplyFilter();
             ApplyScaledLayout(_visualScale, _animations ? EntrySlideDip * _scale : 0f);
+
+            _leafParticle = Nx.NxLeafParticle.Create();
         }
 
         internal bool IsClosing => _closing;
@@ -256,12 +269,22 @@ namespace nyxWM
                 case WM_SETCURSOR:
                     {
                         Point client = PointToClient(Cursor.Position);
-                        if (_list.HitTest(client.Y) >= 0)
+                        if (_list.HitTest(MapToListX(client.X), MapToListY(client.Y)) >= 0)
                         {
                             Cursor.Current = Cursors.Hand;
                             return;
                         }
                     }
+                    break;
+
+                case WM_KILLFOCUS:
+                    if (IsNotificationCardHandle(m.WParam))
+                        return;
+                    break;
+
+                case WM_SETFOCUS:
+                    if (IsNotificationCardHandle(m.WParam))
+                        return;
                     break;
             }
 
@@ -372,19 +395,19 @@ namespace nyxWM
                     return;
 
                 case Keys.Down:
-                    _list.MoveSelection(1);
+                    _list.MoveSelection(_list.ColumnStep);
                     return;
 
                 case Keys.Up:
-                    _list.MoveSelection(-1);
+                    _list.MoveSelection(-_list.ColumnStep);
                     return;
 
                 case Keys.PageDown:
-                    _list.MoveSelection(_list.VisibleRows());
+                    _list.MoveSelection(_list.VisibleItems());
                     return;
 
                 case Keys.PageUp:
-                    _list.MoveSelection(-_list.VisibleRows());
+                    _list.MoveSelection(-_list.VisibleItems());
                     return;
 
                 case Keys.Tab:
@@ -443,17 +466,16 @@ namespace nyxWM
                 return;
             }
 
-            int listY = MapToListY(y);
-            if (_list.SetHover(listY)) ApplyLayered();
+            if (_list.SetHover(MapToListX(x), MapToListY(y))) ApplyLayered();
         }
 
         private void HandleMouseDown(int x, int y, MouseButtons button)
         {
             if (_closing) return;
 
-            if (!IsOutsideListArea(x, y) && _list.HitTest(MapToListY(y)) >=0)
+            if (!IsOutsideListArea(x, y) && _list.HitTest(MapToListX(x), MapToListY(y)) >=0)
             {
-                _list.HandleMouseDown(MapToListY(y), button, PointToScreen(new Point(x, y)));
+                _list.HandleMouseDown(MapToListX(x), MapToListY(y), button, PointToScreen(new Point(x, y)));
                 return;
             }
 
@@ -465,7 +487,7 @@ namespace nyxWM
         {
             if (_closing) return;
             if (!IsOutsideListArea(x, y))
-                _list.HandleMouseUp(MapToListY(y), button);
+                _list.HandleMouseUp(MapToListX(x), MapToListY(y), button);
         }
 
         private void HandleMouseWheel(Message m)
@@ -473,7 +495,7 @@ namespace nyxWM
             if (_closing) return;
             int delta = (short)((ulong)m.WParam >>16);
             Point client = PointToClient(Cursor.Position);
-            _list.HandleMouseWheel(delta, client.Y);
+            _list.HandleMouseWheel(delta, MapToListX(client.X), MapToListY(client.Y));
         }
 
         private bool IsOutsideCard(int x, int y)
@@ -492,6 +514,11 @@ namespace nyxWM
             float listLeft = _searchRect.Left;
             float listRight = _searchRect.Right;
             return x < listLeft || x > listRight || y < listTop || y >= listBottom;
+        }
+
+        private int MapToListX(int x)
+        {
+            return (int)(x - _searchRect.Left);
         }
 
         private int MapToListY(int y)
@@ -565,6 +592,9 @@ namespace nyxWM
 
             DrawGlass(g);
             DrawCardContent(g);
+
+            // Paint leaf particles on top of the menu.
+            _leafParticle?.Paint(g);
         }
 
         private void ApplyLayered()
@@ -883,6 +913,9 @@ namespace nyxWM
         {
             _elapsedMs += dtMs;
 
+            // Advance leaf particles around the menu.
+            _leafParticle?.Update(dtMs, new RectangleF(0f, 0f, Width, Height));
+
             float entryProgress = Math.Clamp(_elapsedMs / EntryDurationMs, 0f, 1f);
             float easedEntry = EaseOutCubic(entryProgress);
 
@@ -967,8 +1000,44 @@ namespace nyxWM
         {
             base.OnDeactivate(e);
 
+            if (IsForegroundWindowNotification())
+                return;
+
             if (!_closing && _elapsedMs >140f && !_list.IsPinMenuOpen && IsMouseButtonDown())
                 BeginClose();
+        }
+
+        private bool IsForegroundWindowNotification()
+        {
+            try
+            {
+                IntPtr fg = GetForegroundWindow();
+                if (fg == IntPtr.Zero || fg == Handle)
+                    return false;
+
+                GetWindowThreadProcessId(fg, out int pid);
+                if (pid != Environment.ProcessId)
+                    return false;
+
+                return fg.ToString().Contains("NotificationCard") || IsNotificationCardHandle(fg);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsNotificationCardHandle(IntPtr hWnd)
+        {
+            try
+            {
+                Control? ctrl = Control.FromHandle(hWnd);
+                return ctrl is NotificationCard;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static bool IsMouseButtonDown()

@@ -194,6 +194,7 @@ namespace nyxWM
                 PauseOnFullscreen = true,
                 MainMod = "CONTROL+ALT",
                 Theme = "Blue",
+                ThemeFile = "Off",
                 ThemeMode = "Dark",
                 GlassEnabled = true,
                 WindowOpacity = 0.95f,
@@ -725,17 +726,18 @@ namespace nyxWM
         public string MainMod { get; set; } = string.Empty;
 
         /// <summary>
-        /// Accent theme: White, Black, Red, Blue (default), Orange, Green,
-        /// Purple, Cyan, Pink or Custom. "Custom" reads the accent from the
-        /// active .nx theme file. Legacy names are migrated automatically.
+        /// Accent theme: Off (default), White, Black, Red, Blue, Orange, Green,
+        /// Purple, Cyan, Pink or Custom. "Off" uses built-in defaults with default
+        /// accent. "Custom" reads the accent from the active .nx theme file.
+        /// Legacy names are migrated automatically.
         /// </summary>
         public string? Theme { get; set; }
 
         /// <summary>
         /// The .nx file in the themes/ directory used as the main theme.
-        /// Default: "theme.nx".
+        /// "Off" (default) uses built-in defaults with accent color applied.
         /// </summary>
-        public string ThemeFile { get; set; } = "theme.nx";
+        public string ThemeFile { get; set; } = "Off";
 
         /// <summary>
         /// UI mode: "Dark" (default) or "Light".

@@ -93,5 +93,7 @@ namespace nyxWM.Nx
 
             return string.Empty;
         }
+
+        internal static string GetFallbackSourceStatic() => GetFallbackSource();
     }
 }

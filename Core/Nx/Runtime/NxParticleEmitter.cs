@@ -13,6 +13,9 @@ namespace nyxWM.Nx
     internal sealed class NxParticleEmitter
     {
         private readonly List<Particle> _particles = new();
+        // Update runs on the frame-clock thread while Paint runs on the UI
+        // thread, so every access to the particle list goes through this lock.
+        private readonly object _particlesLock = new();
         private readonly Random _rng = new(Environment.TickCount);
         private readonly string _imagePath;
         private readonly string _sourceFile;
@@ -33,6 +36,14 @@ namespace nyxWM.Nx
         }
 
         internal void Update(double deltaMs, RectangleF elementBounds, NxStyle style)
+        {
+            lock (_particlesLock)
+            {
+                Advance(deltaMs, elementBounds, style);
+            }
+        }
+
+        private void Advance(double deltaMs, RectangleF elementBounds, NxStyle style)
         {
             double delta = Math.Clamp(deltaMs, 1.0, 100.0);
             _elapsedMs += delta;
@@ -130,7 +141,12 @@ namespace nyxWM.Nx
 
         internal void Paint(Graphics graphics, NxStyle style)
         {
-            if (_particles.Count == 0) return;
+            Particle[] snapshot;
+            lock (_particlesLock)
+            {
+                if (_particles.Count == 0) return;
+                snapshot = _particles.ToArray();
+            }
 
             GraphicsState saved = graphics.Save();
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -140,7 +156,7 @@ namespace nyxWM.Nx
             if (_imagePath.Length > 0 && _sourceFile.Length > 0)
                 image = NxImageCache.Get(_imagePath, _sourceFile);
 
-            foreach (Particle p in _particles)
+            foreach (Particle p in snapshot)
             {
                 if (p.Alpha == 0) continue;
 

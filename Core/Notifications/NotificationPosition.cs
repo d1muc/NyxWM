@@ -12,7 +12,9 @@ namespace nyxWM
         TopRight,
         BottomCenter,
         BottomLeft,
-        BottomRight
+        BottomRight,
+        /// <summary>Vertically centered on the monitor. Only reachable from an .nx theme token.</summary>
+        Center
     }
 
     /// <summary>
