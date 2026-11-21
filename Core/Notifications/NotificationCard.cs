@@ -218,10 +218,10 @@ namespace nyxWM
             // background painting: erasing here would punch an opaque hole in it.
         }
 
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            ApplyLayered();
-        }
+        // No OnPaint override: layered windows render via UpdateLayeredWindow in
+        // Advance->ApplyLayered. OnPaint would race with the frame loop and call
+        // ApplyLayered while _buffer is locked by GetHbitmap, causing
+        // "Object is currently in use elsewhere".
 
         /// <summary>Recreates the ARGB buffer when the window size changed.</summary>
         private void EnsureBufferSize()

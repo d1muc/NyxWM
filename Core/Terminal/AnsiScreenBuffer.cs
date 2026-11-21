@@ -62,7 +62,9 @@ namespace nyxWM
     /// <summary>
     /// One character cell of the emulated screen. <see cref="IsContinuation"/>
     /// marks the trailing cell of a wide (CJK/emoji) character; a renderer
-    /// follows it and skips the cell.
+    /// follows it and skips the cell. <see cref="Combining"/> carries the
+    /// zero-width marks that belong to this cell's base glyph, so an accented
+    /// or composed character stays one cell wide instead of losing its marks.
     /// </summary>
     internal readonly struct ScreenCell
     {
@@ -72,12 +74,24 @@ namespace nyxWM
             AnsiColor background,
             AnsiAttributes attributes,
             bool isContinuation)
+            : this(rune, foreground, background, attributes, isContinuation, null)
+        {
+        }
+
+        private ScreenCell(
+            Rune rune,
+            AnsiColor foreground,
+            AnsiColor background,
+            AnsiAttributes attributes,
+            bool isContinuation,
+            string? combining)
         {
             Rune = rune;
             Foreground = foreground;
             Background = background;
             Attributes = attributes;
             IsContinuation = isContinuation;
+            Combining = combining;
         }
 
         public Rune Rune { get; }
@@ -86,7 +100,15 @@ namespace nyxWM
         public AnsiAttributes Attributes { get; }
         public bool IsContinuation { get; }
 
-        public override string ToString() => Rune.ToString();
+        /// <summary>Zero-width marks drawn on top of <see cref="Rune"/>, or null.</summary>
+        public string? Combining { get; }
+
+        /// <summary>Same cell with one more combining mark attached.</summary>
+        internal ScreenCell WithCombining(string marks) =>
+            new(Rune, Foreground, Background, Attributes, IsContinuation, marks);
+
+        public override string ToString() =>
+            Combining is null ? Rune.ToString() : Rune + Combining;
     }
 
     /// <summary>
@@ -143,6 +165,11 @@ namespace nyxWM
         private bool _alternate;
         private bool _dirty;
         private int _scrollOffset;
+
+        // Cell that received the last printed base glyph. Combining marks are
+        // attached to it, because they arrive as separate runes of their own.
+        private int _glyphRow = -1;
+        private int _glyphColumn = -1;
 
         private ParserState _state = ParserState.Ground;
         private int _version;
@@ -288,21 +315,31 @@ namespace nyxWM
             ScreenCell[] newMain = NewGrid(width, height);
             ScreenCell[] newAlternate = NewGrid(width, height);
 
-            CopyGrid(_cells, _columns, _rows, newMain, width, height);
-            CopyGrid(_alternateCells, _columns, _rows, newAlternate, width, height);
+            // The cursor lives on the bottom row, so a shorter grid keeps the
+            // newest lines and lets the ones above them scroll into the history
+            // instead of vanishing. Dropping them is what makes a resized
+            // terminal look like it ate the output that was on screen.
+            int dropped = Math.Max(0, _rows - height);
+            if (dropped > 0 && !_alternate)
+                PushHistory(_cells, dropped);
+
+            CopyGrid(_cells, _columns, _rows, newMain, width, height, dropped);
+            CopyGrid(_alternateCells, _columns, _rows, newAlternate, width, height, 0);
 
             _cells = newMain;
             _alternateCells = newAlternate;
             _columns = width;
             _rows = height;
 
-            _cursorRow = Math.Min(_cursorRow, height - 1);
+            _cursorRow = Math.Clamp(_cursorRow - dropped, 0, height - 1);
             _cursorColumn = Math.Min(_cursorColumn, width - 1);
             _savedCursorRow = Math.Min(_savedCursorRow, height - 1);
             _savedCursorColumn = Math.Min(_savedCursorColumn, width - 1);
             _scrollTop = 0;
             _scrollBottom = height - 1;
             _wrapPending = false;
+            _glyphRow = -1;
+            _glyphColumn = -1;
 
             ResizeHistory(width);
 
@@ -560,55 +597,77 @@ namespace nyxWM
         private void CursorUp(int count) => MoveRow(-count);
         private void CursorDown(int count) => MoveRow(count);
 
+        /// <summary>
+        /// Flags the screen dirty and cancels a pending wrap. Any explicit
+        /// cursor motion means the next character no longer belongs to the line
+        /// after this one, which is what a shell expects after it positions the
+        /// cursor to redraw a line.
+        /// </summary>
+        private void MarkCursorMoved()
+        {
+            _wrapPending = false;
+            _dirty = true;
+        }
+
         private void MoveRow(int delta)
         {
-            _cursorRow = Math.Clamp(_cursorRow + delta, 0, _rows - 1);
-            _dirty = true;
+            // Row motion stops at the scroll margins when the cursor is inside
+            // them, so a full-screen program with a status line cannot drag its
+            // cursor into the region it reserved.
+            int next = _cursorRow + delta;
+
+            if (delta < 0 && _cursorRow >= _scrollTop)
+                next = Math.Max(next, _scrollTop);
+            else if (delta > 0 && _cursorRow <= _scrollBottom)
+                next = Math.Min(next, _scrollBottom);
+
+            _cursorRow = Math.Clamp(next, 0, _rows - 1);
+            MarkCursorMoved();
         }
 
         private void CursorForward(int count)
         {
             _cursorColumn = Math.Clamp(_cursorColumn + count, 0, _columns - 1);
-            _dirty = true;
+            MarkCursorMoved();
         }
 
         private void CursorBack(int count)
         {
             _cursorColumn = Math.Clamp(_cursorColumn - count, 0, _columns - 1);
-            _dirty = true;
+            MarkCursorMoved();
         }
 
         private void CursorNextLine(int count)
         {
             _cursorRow = Math.Clamp(_cursorRow + count, 0, _rows - 1);
             _cursorColumn = 0;
-            _dirty = true;
+            MarkCursorMoved();
         }
 
         private void CursorPreviousLine(int count)
         {
             _cursorRow = Math.Clamp(_cursorRow - count, 0, _rows - 1);
             _cursorColumn = 0;
-            _dirty = true;
+            MarkCursorMoved();
         }
 
         private void MoveToColumn(int column)
         {
             _cursorColumn = Math.Clamp(column - 1, 0, _columns - 1);
-            _dirty = true;
+            MarkCursorMoved();
         }
 
         private void MoveToLine(int line)
         {
             _cursorRow = Math.Clamp(line - 1, 0, _rows - 1);
-            _dirty = true;
+            MarkCursorMoved();
         }
 
         private void MoveTo(int row, int column)
         {
             _cursorRow = Math.Clamp(row - 1, 0, _rows - 1);
             _cursorColumn = Math.Clamp(column - 1, 0, _columns - 1);
-            _dirty = true;
+            MarkCursorMoved();
         }
 
         private void SaveCursor()
@@ -621,7 +680,7 @@ namespace nyxWM
         {
             _cursorRow = Math.Clamp(_savedCursorRow, 0, _rows - 1);
             _cursorColumn = Math.Clamp(_savedCursorColumn, 0, _columns - 1);
-            _dirty = true;
+            MarkCursorMoved();
         }
 
         // ---- text plumbing -------------------------------------------------------
@@ -629,8 +688,15 @@ namespace nyxWM
         private void PutRune(Rune rune)
         {
             int width = RuneWidth(rune);
+
             if (width <= 0)
+            {
+                // Zero-width runes are the second half of a composed character:
+                // they belong to the glyph that was printed last, not to a cell
+                // of their own, or an accented letter would lose its accent.
+                AttachZeroWidth(rune);
                 return;
+            }
 
             if (_wrapPending)
             {
@@ -653,7 +719,10 @@ namespace nyxWM
             SetCell(row, column, MakeCell(rune));
 
             if (width == 2 && column + 1 < _columns)
-                SetCell(row, column + 1, ContinuationCell());
+                SetCell(row, column + 1, MakeContinuation());
+
+            _glyphRow = row;
+            _glyphColumn = column;
 
             int next = column + width;
             if (next >= _columns)
@@ -667,26 +736,64 @@ namespace nyxWM
             }
         }
 
+        /// <summary>
+        /// Appends a zero-width rune (combining mark, variation selector) to the
+        /// last printed glyph. Anything that is not zero-width by design, such as
+        /// a stray C1 control byte, is discarded.
+        /// </summary>
+        private void AttachZeroWidth(Rune rune)
+        {
+            if (_glyphRow < 0 || _glyphColumn < 0)
+                return;
+
+            int value = rune.Value;
+            if (!IsCombining(value) && !IsVariationSelector(value))
+                return;
+
+            int index = _glyphRow * _columns + _glyphColumn;
+            if ((uint)index >= (uint)Active.Length)
+                return;
+
+            ScreenCell target = Active[index];
+            if (target.IsContinuation || target.Rune.Value == 0)
+                return;
+
+            Active[index] = target.WithCombining(
+                target.Combining is null ? rune.ToString() : target.Combining + rune);
+
+            _dirty = true;
+        }
+
         private void Backspace()
         {
             if (_cursorColumn > 0)
-            {
                 _cursorColumn--;
-                _dirty = true;
-            }
+
+            MarkCursorMoved();
         }
 
         private void Tab()
         {
             int next = (_cursorColumn / 8 + 1) * 8;
-            _cursorColumn = Math.Min(next, _columns - 1);
-            _dirty = true;
+
+            if (next >= _columns)
+            {
+                // A tab that runs off the end parks on the last column with a
+                // wrap pending, exactly like a glyph that filled the line.
+                _cursorColumn = _columns - 1;
+                _wrapPending = _wrapEnabled;
+                _dirty = true;
+                return;
+            }
+
+            _cursorColumn = next;
+            MarkCursorMoved();
         }
 
         private void CarriageReturn()
         {
             _cursorColumn = 0;
-            _dirty = true;
+            MarkCursorMoved();
         }
 
         private void LineFeed()
@@ -700,7 +807,7 @@ namespace nyxWM
                 _cursorRow++;
             }
 
-            _dirty = true;
+            MarkCursorMoved();
         }
 
         private void ReverseLineFeed()
@@ -714,7 +821,7 @@ namespace nyxWM
                 _cursorRow--;
             }
 
-            _dirty = true;
+            MarkCursorMoved();
         }
 
         // ---- screen editing ------------------------------------------------------
@@ -1022,6 +1129,8 @@ namespace nyxWM
 
             _alternate = enabled;
             _scrollOffset = 0;
+            _glyphRow = -1;
+            _glyphColumn = -1;
 
             if (enabled)
             {
@@ -1074,6 +1183,8 @@ namespace nyxWM
 
             _history.Clear();
             _scrollOffset = 0;
+            _glyphRow = -1;
+            _glyphColumn = -1;
 
             Clear(Active);
             _dirty = true;
@@ -1096,8 +1207,13 @@ namespace nyxWM
 
         private ScreenCell MakeCell(Rune rune) => new(rune, _foreground, _background, _attributes, false);
 
-        private static ScreenCell ContinuationCell() =>
-            new(new Rune(' '), AnsiColor.Default, AnsiColor.Default, AnsiAttributes.None, true);
+        /// <summary>
+        /// Trailing half of a wide glyph. It carries the same style as the glyph
+        /// it belongs to, so a coloured or reversed wide character paints both
+        /// of its cells as one block.
+        /// </summary>
+        private ScreenCell MakeContinuation() =>
+            new(new Rune(' '), _foreground, _background, _attributes, true);
 
         private static ScreenCell BlankCell(AnsiColor background) =>
             new(new Rune(' '), AnsiColor.Default, background, AnsiAttributes.None, false);
@@ -1141,19 +1257,30 @@ namespace nyxWM
             return grid;
         }
 
+        /// <summary>
+        /// Copies a grid into a differently sized one. <paramref name="skipTopRows"/>
+        /// drops that many rows from the top of the source, which is how a
+        /// shrink keeps the newest lines in place.
+        /// </summary>
         private static void CopyGrid(
             ScreenCell[] source,
             int sourceColumns,
             int sourceRows,
             ScreenCell[] destination,
             int destinationColumns,
-            int destinationRows)
+            int destinationRows,
+            int skipTopRows)
         {
-            int rows = Math.Min(sourceRows, destinationRows);
+            int rows = Math.Min(sourceRows - skipTopRows, destinationRows);
             int columns = Math.Min(sourceColumns, destinationColumns);
 
             for (int row = 0; row < rows; row++)
-                Array.Copy(source, row * sourceColumns, destination, row * destinationColumns, columns);
+                Array.Copy(
+                    source,
+                    (row + skipTopRows) * sourceColumns,
+                    destination,
+                    row * destinationColumns,
+                    columns);
         }
 
         private static int RuneWidth(Rune rune)
@@ -1171,10 +1298,15 @@ namespace nyxWM
 
         private static bool IsCombining(int value) =>
             (value >= 0x0300 && value <= 0x036F) ||
+            (value >= 0x0483 && value <= 0x0489) ||
             (value >= 0x1AB0 && value <= 0x1AFF) ||
             (value >= 0x1DC0 && value <= 0x1DFF) ||
             (value >= 0x20D0 && value <= 0x20FF) ||
             (value >= 0xFE20 && value <= 0xFE2F);
+
+        private static bool IsVariationSelector(int value) =>
+            (value >= 0xFE00 && value <= 0xFE0F) ||
+            (value >= 0xE0100 && value <= 0xE01EF);
 
         private static bool IsWide(int value) =>
             (value >= 0x1100 && value <= 0x115F) ||

@@ -72,8 +72,6 @@ namespace nyxWM
         private readonly StringBuilder _pendingOutput = new();
         private readonly object _pendingLock = new();
         private bool _pumpRunning;
-        private readonly SolidBrush _textBrush = new(Color.Black);
-        private readonly SolidBrush _cellBrush = new(Color.Black);
         private readonly Stopwatch _clock = Stopwatch.StartNew();
 
         private TerminalColorScheme _scheme;
@@ -109,12 +107,13 @@ namespace nyxWM
         private double _lastTickMs;
         private float _elapsedMs;
 
+        private readonly TerminalTextRenderer _text;
+        private TerminalPalette _palette;
+
         private TerminalSession? _session;
         private AnsiScreenBuffer? _screen;
         private int _consoleColumns;
         private int _consoleRows;
-        private float _cellWidth = 8f;
-        private float _cellHeight = 16f;
         private string? _sessionError;
         private bool _sessionEnded;
 
@@ -149,6 +148,7 @@ namespace nyxWM
             _cornerRadiusDip = VisualPreferences.CornerRadius(CornerRadiusDip);
             _titleFont = VisualPreferences.CreateUiFont("Segoe UI", 9.5f, FontStyle.Bold);
             _monoFont = TerminalPreferences.CreateConsoleFont(_fontFamily, _fontSize);
+            _text = new TerminalTextRenderer(_monoFont);
 
             _scheme = TerminalColorScheme.Create(_schemeName, _theme);
             _schemeFrom = _scheme;
@@ -470,6 +470,7 @@ namespace nyxWM
         {
             Font previous = _monoFont;
             _monoFont = TerminalPreferences.CreateConsoleFont(_fontFamily, _fontSize);
+            _text.SetFont(_monoFont);
             previous.Dispose();
 
             UpdateConsoleMetrics();
@@ -549,6 +550,13 @@ namespace nyxWM
                     _scheme.PaletteColor(index),
                     t);
             }
+
+            _palette = new TerminalPalette(
+                _consoleForeground,
+                _consoleFill,
+                _cursorColor,
+                Color.FromArgb(72, _accentColor),
+                _ansiPalette);
 
             Invalidate();
         }
@@ -882,6 +890,19 @@ namespace nyxWM
                 glowHeight);
         }
 
+        /// <summary>
+        /// Left edge of the cell grid, snapped to a whole pixel: every glyph,
+        /// background and cursor is placed relative to it, so the grid never
+        /// sits on a half pixel where ClearType would blur it.
+        /// </summary>
+        private int ConsoleOriginX => (int)MathF.Round(_consoleRect.Left + ConsolePaddingDip * _scale);
+
+        /// <summary>Top edge of the cell grid, snapped to a whole pixel.</summary>
+        private int ConsoleOriginY => (int)MathF.Round(_consoleRect.Top + ConsolePaddingDip * _scale);
+
+        /// <summary>Bottom edge of the cell grid; rows starting below it are skipped.</summary>
+        private int ConsoleBottom => (int)MathF.Round(_consoleRect.Bottom - ConsolePaddingDip * _scale);
+
         private void DrawConsole(Graphics graphics)
         {
             if (_consoleRect.Width <= 1f || _consoleRect.Height <= 1f)
@@ -890,6 +911,13 @@ namespace nyxWM
             using GraphicsPath consolePath = CreateRoundedPath(
                 _consoleRect,
                 ConsoleRadiusDip * _scale);
+
+            // Background fill must clear the full console area regardless of
+            // the invalidation clip region (which may be smaller due to
+            // OptimizedDoubleBuffer partial updates). Save clip, fill unclipped
+            // to consolePath, then restore for text drawing.
+            Region? previousClip = graphics.Clip;
+            graphics.SetClip(consolePath);
 
             using (var fill = new SolidBrush(_consoleFill))
             {
@@ -901,140 +929,71 @@ namespace nyxWM
                 graphics.DrawPath(border, consolePath);
             }
 
-            float pad = ConsolePaddingDip * _scale;
-            float originX = _consoleRect.Left + pad;
-            float originY = _consoleRect.Top + pad;
+            graphics.Clip = previousClip;
+
+            int originX = ConsoleOriginX;
+            int originY = ConsoleOriginY;
 
             GraphicsState state = graphics.Save();
             graphics.SetClip(consolePath);
 
-            if (_sessionError is not null)
+            try
             {
-                DrawConsoleMessage(graphics, _sessionError, originX, originY);
-                graphics.Restore(state);
-                return;
-            }
+                AnsiScreenBuffer? screen = _screen;
 
-            AnsiScreenBuffer? screen = _screen;
-            if (screen is null)
-            {
-                DrawConsoleMessage(graphics, "starting shell...", originX, originY);
-                graphics.Restore(state);
-                return;
-            }
-
-            DrawScreen(graphics, screen, originX, originY);
-            DrawSelection(graphics, originX, originY);
-
-            if (_sessionEnded)
-                DrawConsoleMessage(graphics, "[process exited]", originX, originY + _cellHeight);
-
-            graphics.Restore(state);
-        }
-
-        private void DrawScreen(Graphics graphics, AnsiScreenBuffer screen, float originX, float originY)
-        {
-            Color defaultForeground = _consoleForeground;
-            float bottom = _consoleRect.Bottom - ConsolePaddingDip * _scale;
-
-            using var format = new StringFormat(StringFormat.GenericTypographic)
-            {
-                Alignment = StringAlignment.Near,
-                LineAlignment = StringAlignment.Near,
-                FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces
-            };
-
-            var builder = new StringBuilder(screen.Columns);
-
-            for (int row = 0; row < screen.Rows; row++)
-            {
-                float y = originY + row * _cellHeight;
-                if (y + _cellHeight > bottom + _cellHeight)
-                    break;
-
-                int column = 0;
-                while (column < screen.Columns)
+                if (_sessionError is not null)
                 {
-                    ScreenCell first = screen.GetViewCell(row, column);
-                    if (first.IsContinuation)
-                    {
-                        column++;
-                        continue;
-                    }
+                    _text.DrawMessage(graphics, _sessionError, _mutedColor, originX, originY, _consoleColumns);
+                    return;
+                }
 
-                    int runStart = column;
-                    builder.Clear();
+                if (screen is null)
+                {
+                    _text.DrawMessage(graphics, "starting shell...", _mutedColor, originX, originY, _consoleColumns);
+                    return;
+                }
 
-                    while (column < screen.Columns)
-                    {
-                        ScreenCell current = screen.GetViewCell(row, column);
-                        if (current.IsContinuation)
-                        {
-                            column++;
-                            continue;
-                        }
+                _text.DrawScreen(
+                    graphics,
+                    screen,
+                    _palette,
+                    originX,
+                    originY,
+                    _consoleColumns,
+                    _consoleRows,
+                    ConsoleBottom,
+                    _scale);
 
-                        if (builder.Length > 0 && !SameCellStyle(first, current))
-                            break;
+                if (_hasSelection)
+                {
+                    (Point start, Point end) = NormalizeSelection();
+                    _text.DrawSelection(graphics, _palette, originX, originY, start, end, _consoleColumns);
+                }
 
-                        builder.Append(current.Rune.ToString());
-                        column++;
-                    }
+                DrawCursor(graphics, screen, originX, originY);
 
-                    string text = builder.ToString();
-                    bool reverse = (first.Attributes & AnsiAttributes.Reverse) != 0;
-
-                    Color foreground;
-                    Color background;
-
-                    if (reverse)
-                    {
-                        foreground = ResolveColor(first.Background, _consoleFill);
-                        background = ResolveColor(first.Foreground, defaultForeground);
-                    }
-                    else
-                    {
-                        foreground = ResolveColor(first.Foreground, defaultForeground);
-                        background = ResolveColor(first.Background, Color.Transparent);
-                    }
-
-                    var rect = new RectangleF(
-                        originX + runStart * _cellWidth,
-                        y,
-                        MathF.Max(1f, (column - runStart) * _cellWidth),
-                        _cellHeight);
-
-                    if (background.A > 0)
-                    {
-                        // One brush is reused per paint; a full-screen animation
-                        // would otherwise allocate thousands of GDI+ objects.
-                        _cellBrush.Color = background;
-                        graphics.FillRectangle(_cellBrush, rect);
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(text))
-                    {
-                        _textBrush.Color = foreground;
-                        graphics.DrawString(text, _monoFont, _textBrush, rect.Location, format);
-
-                        if ((first.Attributes & AnsiAttributes.Underline) != 0)
-                        {
-                            using var underline = new Pen(foreground, MathF.Max(1f, _scale));
-                            graphics.DrawLine(
-                                underline,
-                                rect.Left,
-                                rect.Bottom - 1f,
-                                rect.Right,
-                                rect.Bottom - 1f);
-                        }
-                    }
+                if (_sessionEnded)
+                {
+                    _text.DrawMessage(
+                        graphics,
+                        "[process exited]",
+                        _mutedColor,
+                        originX,
+                        originY + _text.Metrics.Height,
+                        _consoleColumns);
                 }
             }
-
-            DrawCursor(graphics, screen, originX, originY);
+            finally
+            {
+                graphics.Restore(state);
+            }
         }
 
-        private void DrawCursor(Graphics graphics, AnsiScreenBuffer screen, float originX, float originY)
+        /// <summary>
+        /// Draws the caret, but only where it belongs: a shell that hid it, a
+        /// view scrolled into the history or an unfocused window has none.
+        /// </summary>
+        private void DrawCursor(Graphics graphics, AnsiScreenBuffer screen, int originX, int originY)
         {
             if (!screen.CursorVisible || !ContainsFocus || screen.ScrollOffset > 0)
                 return;
@@ -1042,61 +1001,15 @@ namespace nyxWM
             if (_cursorBlink && !_cursorBlinkOn)
                 return;
 
-            var rect = new RectangleF(
-                originX + screen.CursorColumn * _cellWidth,
-                originY + screen.CursorRow * _cellHeight,
-                MathF.Max(1f, _cellWidth),
-                MathF.Max(1f, _cellHeight));
-
-            switch (_cursorStyle)
-            {
-                case TerminalPreferences.CursorLine:
-                {
-                    float width = MathF.Max(1f, 2f * _scale);
-                    using var pen = new Pen(_cursorColor, width);
-                    float x = rect.Left + width * 0.5f;
-                    graphics.DrawLine(pen, x, rect.Top, x, rect.Bottom);
-                    break;
-                }
-
-                case TerminalPreferences.CursorUnderline:
-                {
-                    float height = MathF.Max(1f, 2f * _scale);
-                    using var brush = new SolidBrush(_cursorColor);
-                    graphics.FillRectangle(brush, rect.Left, rect.Bottom - height, rect.Width, height);
-                    break;
-                }
-
-                default:
-                {
-                    using var brush = new SolidBrush(Color.FromArgb(96, _cursorColor));
-                    graphics.FillRectangle(brush, rect);
-                    break;
-                }
-            }
-        }
-
-        private void DrawSelection(Graphics graphics, float originX, float originY)
-        {
-            if (!_hasSelection)
-                return;
-
-            (Point start, Point end) = NormalizeSelection();
-            using var brush = new SolidBrush(Color.FromArgb(72, _accentColor));
-
-            for (int row = start.Y; row <= end.Y; row++)
-            {
-                int from = row == start.Y ? start.X : 0;
-                int to = row == end.Y ? end.X : Math.Max(0, _consoleColumns - 1);
-
-                var rect = new RectangleF(
-                    originX + from * _cellWidth,
-                    originY + row * _cellHeight,
-                    MathF.Max(1f, (to - from + 1) * _cellWidth),
-                    _cellHeight);
-
-                graphics.FillRectangle(brush, rect);
-            }
+            _text.DrawCursor(
+                graphics,
+                _palette,
+                originX,
+                originY,
+                screen.CursorColumn,
+                screen.CursorRow,
+                _cursorStyle,
+                _scale);
         }
 
         private (Point Start, Point End) NormalizeSelection()
@@ -1116,17 +1029,21 @@ namespace nyxWM
             if (_screen is null || _consoleColumns <= 0 || _consoleRows <= 0)
                 return false;
 
-            float pad = ConsolePaddingDip * _scale;
-            float left = _consoleRect.Left + pad;
-            float top = _consoleRect.Top + pad;
-            float right = _consoleRect.Right - pad;
-            float bottom = _consoleRect.Bottom - pad;
+            // Pixel-to-cell mapping walks the same integer grid the glyphs were
+            // drawn on, so a click selects the character under the pointer.
+            TerminalCellMetrics metrics = _text.Metrics;
+            int localX = point.X - ConsoleOriginX;
+            int localY = point.Y - ConsoleOriginY;
 
-            if (point.X < left || point.X > right || point.Y < top || point.Y > bottom)
+            if (localX < 0 || localY < 0
+                || localX >= _consoleColumns * metrics.Width
+                || localY >= _consoleRows * metrics.Height)
+            {
                 return false;
+            }
 
-            column = Math.Clamp((int)MathF.Floor((point.X - left) / _cellWidth), 0, _consoleColumns - 1);
-            row = Math.Clamp((int)MathF.Floor((point.Y - top) / _cellHeight), 0, _consoleRows - 1);
+            column = Math.Min(localX / metrics.Width, _consoleColumns - 1);
+            row = Math.Min(localY / metrics.Height, _consoleRows - 1);
             return true;
         }
 
@@ -1152,7 +1069,8 @@ namespace nyxWM
                     if (cell.IsContinuation)
                         continue;
 
-                    line.Append(cell.Rune.ToString());
+                    // ToString carries the combining marks of the cell as well.
+                    line.Append(cell.ToString());
                 }
 
                 builder.Append(line.ToString().TrimEnd());
@@ -1179,52 +1097,6 @@ namespace nyxWM
                 // Clipboard is held by another process; nothing sensible to do.
             }
         }
-
-        private void DrawConsoleMessage(Graphics graphics, string message, float x, float y)
-        {
-            using var brush = new SolidBrush(_mutedColor);
-            using var format = new StringFormat
-            {
-                Alignment = StringAlignment.Near,
-                LineAlignment = StringAlignment.Near,
-                Trimming = StringTrimming.EllipsisCharacter,
-                FormatFlags = StringFormatFlags.NoWrap
-            };
-
-            var rect = new RectangleF(
-                x,
-                y,
-                MathF.Max(1f, _consoleRect.Right - x - ConsolePaddingDip * _scale),
-                _monoFont.GetHeight(graphics));
-
-            graphics.DrawString(message, _monoFont, brush, rect, format);
-        }
-
-        private static bool SameCellStyle(ScreenCell left, ScreenCell right)
-        {
-            return left.Foreground.Equals(right.Foreground)
-                   && left.Background.Equals(right.Background)
-                   && left.Attributes == right.Attributes;
-        }
-
-        private Color ResolveColor(AnsiColor color, Color fallback)
-        {
-            return color.Kind switch
-            {
-                AnsiColorKind.Rgb => Color.FromArgb(color.Red, color.Green, color.Blue),
-                AnsiColorKind.Indexed => IndexedColor(color.Index),
-                _ => fallback
-            };
-        }
-
-        private Color IndexedColor(byte index)
-        {
-            if (index < 16)
-                return _ansiPalette[index];
-
-            return TerminalColorScheme.StandardColor(index);
-        }
-
 
         private void DrawHeader(Graphics graphics)
         {
@@ -1340,6 +1212,7 @@ namespace nyxWM
             if (_session is not null || _sessionError is not null)
                 return;
 
+            ApplyLayout();
             UpdateConsoleMetrics();
 
             try
@@ -1387,28 +1260,17 @@ namespace nyxWM
             float width = MathF.Max(1f, _consoleRect.Width - pad * 2f);
             float height = MathF.Max(1f, _consoleRect.Height - pad * 2f);
 
-            float cellWidth;
-            float cellHeight;
-
             using (Graphics graphics = CreateGraphics())
             {
-                // GDI+ metrics, not GDI TextRenderer: DrawScreen draws with
-                // GenericTypographic, and a GDI/GDI+ mismatch skews the cell grid.
-                SizeF cell = graphics.MeasureString(
-                    "M",
-                    _monoFont,
-                    int.MaxValue,
-                    StringFormat.GenericTypographic);
-
-                cellWidth = MathF.Max(1f, MathF.Ceiling(cell.Width));
-                cellHeight = MathF.Max(1f, _monoFont.GetHeight(graphics));
+                // One measurement pass feeds both the glyph grid and the size the
+                // pseudoconsole is told, so the shell wraps exactly where the
+                // last fully visible cell ends.
+                _text.RefreshMetrics(graphics);
             }
 
-            _cellWidth = cellWidth;
-            _cellHeight = cellHeight;
-
-            int columns = Math.Max(1, (int)MathF.Floor(width / cellWidth));
-            int rows = Math.Max(1, (int)MathF.Floor(height / cellHeight));
+            TerminalCellMetrics metrics = _text.Metrics;
+            int columns = metrics.ColumnsFor(width);
+            int rows = metrics.RowsFor(height);
 
             if (_consoleColumns == columns && _consoleRows == rows)
                 return;
@@ -1514,23 +1376,19 @@ namespace nyxWM
 
             if (WindowState == FormWindowState.Minimized
                 || screen is null
-                || _consoleRect.Width <= 1f
-                || _cellWidth <= 0f
-                || _cellHeight <= 0f)
+                || _consoleRect.Width <= 1f)
             {
                 Invalidate();
                 return;
             }
 
-            float pad = ConsolePaddingDip * _scale;
-            float left = _consoleRect.Left + pad + screen.CursorColumn * _cellWidth;
-            float top = _consoleRect.Top + pad + screen.CursorRow * _cellHeight;
+            TerminalCellMetrics metrics = _text.Metrics;
 
             var rect = new Rectangle(
-                (int)MathF.Floor(left) - 1,
-                (int)MathF.Floor(top) - 1,
-                (int)MathF.Ceiling(_cellWidth) + 2,
-                (int)MathF.Ceiling(_cellHeight) + 2);
+                metrics.ColumnX(ConsoleOriginX, screen.CursorColumn) - 1,
+                metrics.RowY(ConsoleOriginY, screen.CursorRow) - 1,
+                metrics.Width + 2,
+                metrics.Height + 2);
 
             Invalidate(rect);
         }
@@ -1645,10 +1503,9 @@ namespace nyxWM
                 _session?.Dispose();
                 _session = null;
 
+                _text.Dispose();
                 _titleFont.Dispose();
                 _monoFont.Dispose();
-                _textBrush.Dispose();
-                _cellBrush.Dispose();
             }
 
             base.Dispose(disposing);

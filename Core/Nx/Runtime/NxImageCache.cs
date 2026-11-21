@@ -24,6 +24,9 @@ namespace nyxWM.Nx
         private static readonly ConcurrentDictionary<string, Image?> Cache =
             new(StringComparer.OrdinalIgnoreCase);
 
+        private static readonly ConcurrentDictionary<string, object> CloneLocks =
+            new(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>True when an icon value names a file instead of a built-in glyph.</summary>
         internal static bool IsPath(string icon)
         {
@@ -41,11 +44,23 @@ namespace nyxWM.Nx
         }
 
         /// <summary>Loads an icon file, or null when it cannot be read.</summary>
+        /// <returns>A clone of the cached bitmap so callers can safely use/dispose independently.</returns>
         internal static Image? Get(string icon, string? sourceFile)
         {
             string path = Resolve(icon, sourceFile);
 
-            return Cache.GetOrAdd(path, Load);
+            Image? cached = Cache.GetOrAdd(path, Load);
+            if (cached == null)
+                return null;
+
+            // Serialize clone creation per source image to avoid GDI+ "Object is
+            // currently in use elsewhere" when the cached bitmap is locked by a
+            // concurrent DrawImage on another clone of the same source.
+            var cloneLock = CloneLocks.GetOrAdd(path, _ => new object());
+            lock (cloneLock)
+            {
+                return new Bitmap(cached);
+            }
         }
 
         private static string Resolve(string icon, string? sourceFile)
